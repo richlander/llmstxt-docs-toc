@@ -32,7 +32,7 @@ var summaryOption = new Option<string>(
     getDefaultValue: () => "Build applications for any platform with C#, F#, and Visual Basic.",
     description: "Summary for root llms.txt");
 
-var rootCommand = new RootCommand("Generate llms.txt hierarchy from toc.yml files")
+var rootCommand = new RootCommand("Generate llms.txt files based on physical file structure from toc.yml references")
 {
     targetDirArg,
     dryRunOption,
@@ -99,25 +99,13 @@ rootCommand.SetHandler(async (context) =>
         return;
     }
 
-    // Default mode: Recursive generation
-    var generator = new RecursiveGenerator(maxLines, title, summary);
+    // Default mode: Structural generation (files appear where they physically exist)
+    var structuralGen = new StructuralLlmsGenerator(maxLines);
     
     try
     {
-        Console.WriteLine("Converting toc.yml files to llms.txt throughout directory tree\n");
-        var rootPath = generator.GenerateRecursive(targetDir, dryRun);
-        
-        Console.WriteLine($"\n{'=',-60}");
-        Console.WriteLine($"Summary:");
-        Console.WriteLine($"  Total files generated: {generator.FilesGenerated}");
-        if (!dryRun)
-        {
-            Console.WriteLine($"  Root file: {rootPath}");
-        }
-        else
-        {
-            Console.WriteLine($"  Mode: Dry run (no files written)");
-        }
+        var count = structuralGen.GenerateAll(targetDir, dryRun);
+        context.ExitCode = 0;
     }
     catch (Exception ex)
     {
