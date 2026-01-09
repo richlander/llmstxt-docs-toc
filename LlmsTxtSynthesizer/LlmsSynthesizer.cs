@@ -24,13 +24,16 @@ public class LlmsSynthesizer
             return files;
         }
         
-        foreach (var file in Directory.EnumerateFiles(_targetDir, "llms*.txt", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(_targetDir, "llms.txt", SearchOption.AllDirectories))
         {
+            var fileDir = Path.GetDirectoryName(file);
+            
             // Skip the root llms.txt itself
-            if (Path.GetDirectoryName(file) == _targetDir)
+            if (fileDir == _targetDir)
             {
                 continue;
             }
+            
             files.Add(file);
         }
         
@@ -54,19 +57,19 @@ public class LlmsSynthesizer
     {
         var lines = new List<string>();
         
-        // Header
+        // Header (4 lines including blanks)
         lines.Add($"# {title}");
         lines.Add("");
         lines.Add($"> {summary}");
         lines.Add("");
         
-        // Quick Start section (if we have getting-started file)
+        // Quick Start section (if we have getting-started file) - max 7 lines
         var gettingStarted = FindFileByPattern("getting-started");
         if (gettingStarted != null)
         {
             lines.Add("## Quick Start");
             lines.Add("");
-            var topLinks = GetTopLinksFromFile(gettingStarted, limit: 4);
+            var topLinks = GetTopLinksFromFile(gettingStarted, limit: 3);
             foreach (var link in topLinks)
             {
                 lines.Add(link.ToString());
@@ -74,11 +77,13 @@ public class LlmsSynthesizer
             lines.Add("");
         }
         
-        // By Topic section (links to child files)
-        lines.Add("## By Topic (Detailed Guides)");
+        // By Topic section (links to child files) - limit to stay under 50 lines total
+        lines.Add("## By Topic");
         lines.Add("");
         
-        foreach (var childFile in _childFiles)
+        // Reserve ~20 lines for topics, rest for other sections
+        var maxTopicCount = Math.Min(_childFiles.Count, 15);
+        foreach (var childFile in _childFiles.Take(maxTopicCount))
         {
             var relPath = childFile.GetRelativePath(_targetDir);
             var desc = !string.IsNullOrEmpty(childFile.Summary) ? childFile.Summary :
@@ -89,25 +94,29 @@ public class LlmsSynthesizer
         
         lines.Add("");
         
-        // Common Tasks section (aggregate from all files)
-        lines.Add("## Common Tasks");
-        lines.Add("");
-        
+        // Common Tasks section (aggregate from all files) - max 8 lines
         var commonTasks = ExtractCommonTasks();
-        foreach (var link in commonTasks.Take(6))
+        if (commonTasks.Any())
         {
-            lines.Add(link.ToString());
+            lines.Add("## Common Tasks");
+            lines.Add("");
+            foreach (var link in commonTasks.Take(5))
+            {
+                lines.Add(link.ToString());
+            }
+            lines.Add("");
         }
         
-        lines.Add("");
-        
-        // Reference section
-        lines.Add("## Reference");
-        lines.Add("");
+        // Reference section - max 7 lines
         var refLinks = ExtractReferenceLinks();
-        foreach (var link in refLinks.Take(4))
+        if (refLinks.Any())
         {
-            lines.Add(link.ToString());
+            lines.Add("## Reference");
+            lines.Add("");
+            foreach (var link in refLinks.Take(3))
+            {
+                lines.Add(link.ToString());
+            }
         }
         
         var content = string.Join("\n", lines);

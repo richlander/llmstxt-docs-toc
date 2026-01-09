@@ -21,7 +21,7 @@ public class RecursiveGenerator
     public int FilesGenerated => _filesGenerated;
 
     /// <summary>
-    /// Recursively generates llms.txt files in depth-first order.
+    /// Converts toc.yml files to llms.txt throughout a directory tree.
     /// Returns the path to the root llms.txt file.
     /// </summary>
     public string GenerateRecursive(string targetDir, bool dryRun = false)
@@ -33,79 +33,37 @@ public class RecursiveGenerator
             throw new DirectoryNotFoundException($"Directory not found: {targetDir}");
         }
 
-        // Get all directories that contain llms*.txt files (excluding llms.txt itself)
-        var dirsWithLlmsFiles = FindDirectoriesWithLlmsFiles(targetDir);
+        // Convert all toc.yml files to llms.txt
+        Console.WriteLine("Converting toc.yml files to llms.txt\n");
+        Console.WriteLine($"{'=',-60}");
+        var converter = new YmlToLlmsConverter(_maxLines);
+        var convertedCount = converter.ConvertAllInDirectory(targetDir, dryRun);
+        Console.WriteLine($"{'=',-60}\n");
         
-        // Sort by depth (deepest first) for depth-first generation
-        var sortedDirs = dirsWithLlmsFiles
-            .OrderByDescending(d => GetDepth(d, targetDir))
-            .ThenBy(d => d)
-            .ToList();
-
-        Console.WriteLine($"Found {sortedDirs.Count} directories with llms*.txt files");
-        Console.WriteLine("Generating in depth-first order:\n");
-
-        // Generate llms.txt for each directory, starting from deepest
-        foreach (var dir in sortedDirs)
-        {
-            var relPath = Path.GetRelativePath(targetDir, dir);
-            var depth = GetDepth(dir, targetDir);
-            var indent = new string(' ', depth * 2);
-            
-            Console.WriteLine($"{indent}[Depth {depth}] {relPath}/");
-            
-            var synthesizer = new LlmsSynthesizer(dir, _maxLines);
-            synthesizer.LoadChildFiles();
-            
-            // Determine title and summary for this directory
-            var dirTitle = GetDirectoryTitle(dir, targetDir);
-            var dirSummary = GetDirectorySummary(dir);
-            
-            var content = synthesizer.GenerateRootContent(dirTitle, dirSummary);
-            var outputPath = Path.Combine(dir, "llms.txt");
-            
-            if (!dryRun)
-            {
-                File.WriteAllText(outputPath, content);
-                var lineCount = content.Trim().Split('\n').Length;
-                Console.WriteLine($"{indent}  ✓ Generated: {Path.GetFileName(outputPath)} ({lineCount} lines, {synthesizer.ChildFileCount} children)");
-            }
-            else
-            {
-                var lineCount = content.Trim().Split('\n').Length;
-                Console.WriteLine($"{indent}  ⊘ Dry run: {Path.GetFileName(outputPath)} ({lineCount} lines, {synthesizer.ChildFileCount} children)");
-            }
-            
-            _filesGenerated++;
-        }
-
-        // Finally, generate the root llms.txt
-        Console.WriteLine($"\n[Root] {Path.GetFileName(targetDir)}/");
-        var rootSynthesizer = new LlmsSynthesizer(targetDir, _maxLines);
-        rootSynthesizer.LoadChildFiles();
-        var rootContent = rootSynthesizer.GenerateRootContent(_title, _summary);
+        _filesGenerated = convertedCount;
+        
         var rootPath = Path.Combine(targetDir, "llms.txt");
         
-        if (!dryRun)
+        Console.WriteLine($"{'=',-60}");
+        Console.WriteLine($"Summary:");
+        Console.WriteLine($"  Total llms.txt files generated: {_filesGenerated}");
+        if (!dryRun && File.Exists(rootPath))
         {
-            File.WriteAllText(rootPath, rootContent);
-            var lineCount = rootContent.Trim().Split('\n').Length;
-            Console.WriteLine($"  ✓ Generated: {Path.GetFileName(rootPath)} ({lineCount} lines, {rootSynthesizer.ChildFileCount} children)");
+            Console.WriteLine($"  Root file: {rootPath}");
         }
-        else
+        else if (dryRun)
         {
-            var lineCount = rootContent.Trim().Split('\n').Length;
-            Console.WriteLine($"  ⊘ Dry run: {Path.GetFileName(rootPath)} ({lineCount} lines, {rootSynthesizer.ChildFileCount} children)");
+            Console.WriteLine($"  Mode: Dry run (no files written)");
         }
-        
-        _filesGenerated++;
+        Console.WriteLine($"{'=',-60}");
 
         return rootPath;
     }
 
     /// <summary>
-    /// Find all directories that contain llms*.txt files (but not llms.txt itself).
+    /// Find all directories that contain llms*.txt files in subdirectories.
     /// These are directories that need a synthesized llms.txt file.
+    /// Directories with only llms-*.txt in themselves (no subdirs) don't need synthesis.
     /// </summary>
     private HashSet<string> FindDirectoriesWithLlmsFiles(string targetDir)
     {
@@ -114,13 +72,21 @@ public class RecursiveGenerator
         foreach (var file in Directory.EnumerateFiles(targetDir, "llms*.txt", SearchOption.AllDirectories))
         {
             var fileName = Path.GetFileName(file);
-            var dir = Path.GetDirectoryName(file)!;
+            var fileDir = Path.GetDirectoryName(file)!;
             
-            // Only process non-root llms*.txt files
-            if (fileName != "llms.txt")
+            // Skip llms.txt files (we're looking for llms-*.txt source files)
+            if (fileName == "llms.txt")
             {
-                // Add the parent directory of this file (which needs a llms.txt)
-                dirs.Add(dir);
+                continue;
+            }
+            
+            // Only synthesize llms.txt if there are child files in subdirectories
+            // Don't synthesize for leaf directories (those with llms-*.txt but no subdirs with llms files)
+            var parentDir = Path.GetDirectoryName(fileDir);
+            if (!string.IsNullOrEmpty(parentDir) && parentDir != targetDir && parentDir.StartsWith(targetDir))
+            {
+                // This file is in a subdirectory - add its parent to the synthesis list
+                dirs.Add(parentDir);
             }
         }
 

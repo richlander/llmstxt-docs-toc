@@ -1,28 +1,178 @@
-# llms.txt Synthesizer Tool
+# llms.txt Generator Tool
 
-A .NET 10 command-line tool that synthesizes a root `llms.txt` file from child `llms*.txt` files discovered in a directory tree. Built to support the llms.txt implementation plan for .NET documentation.
+A .NET 10 command-line tool that **converts toc.yml files to llms.txt format**. Simple 1:1 conversion - each toc.yml becomes an llms.txt in the same directory.
 
 ## Overview
 
-This tool helps maintain a curated, hierarchical `llms.txt` navigation system by:
+This tool automates toc.yml → llms.txt conversion:
+- Finds all `toc.yml` files recursively
+- Converts each to `llms.txt` in the same directory
+- Handles nested YAML structures (5+ levels deep)
+- Flattens to stay under 50-line limit
 
-1. **Discovering** all `llms*.txt` files in subdirectories
-2. **Parsing** their content to extract sections, links, and metadata
-3. **Synthesizing** a root `llms.txt` file that curates the most important content
-4. **Validating** that all files meet the 50-line limit constraint
+## Quick Start
+
+```bash
+cd LlmsTxtSynthesizer
+dotnet build
+dotnet run -- ~/git/docs/docs
+```
+
+That's it! Every directory with a toc.yml gets an llms.txt.
+
+## What Gets Generated
+
+**Input structure**:
+```
+docs/
+├── toc.yml
+└── core/
+    └── toc.yml
+```
+
+**Output**:
+```
+docs/
+├── toc.yml
+├── llms.txt        (from toc.yml)
+└── core/
+    ├── toc.yml
+    └── llms.txt    (from toc.yml)
+```
+
+**One file per directory, no variants.**
+
+## Usage
+
+### Default Mode: Convert All
+
+```bash
+dotnet run -- ~/git/docs/docs
+```
+
+Converts all toc.yml → llms.txt recursively.
+
+### Preview Mode
+
+```bash
+dotnet run -- ~/git/docs/docs --dry-run
+```
+
+Shows what would be generated without writing files.
+
+### View Structure
+
+```bash
+dotnet run -- ~/git/docs/docs --tree
+```
+
+Example output:
+```
+Directory tree for: /home/user/docs
+
+  core/
+    - llms.txt (25 lines, 890 bytes)
+  advanced/
+    - llms.txt (18 lines, 612 bytes)
+./
+  - llms.txt (30 lines, 1.1KB)
+
+Total: 3 files in 3 directories
+```
+
+### Validate Files
+
+```bash
+dotnet run -- ~/git/docs/docs --validate
+```
+
+Example output:
+```
+✓ core/llms.txt (25 lines)
+✓ advanced/llms.txt (18 lines)
+
+whats-new/llms.txt:
+  ✗ File exceeds 50 line limit: 53 lines
+```
+
+### Custom Configuration
+
+```bash
+dotnet run -- ~/git/docs/docs \
+  --title "My Documentation" \
+  --summary "Complete guide to my project" \
+  --max-lines 60
+```
+
+## YAML Structure Support
+
+The tool handles standard toc.yml patterns:
+
+```yaml
+items:
+  - name: Section Name
+    href: relative/path.md
+    items:
+      - name: Subsection
+        href: another/path.md
+      - name: Deep Topic
+        tocHref: ./nested-toc.yml
+```
+
+Converted to:
+
+```markdown
+# Section Name
+
+> Documentation for Section Name (N topics)
+
+## Overview
+
+- [Section Name](relative/path.md)
+
+## Topics
+
+- [Subsection](another/path.md)
+- [Deep Topic](./nested-toc.yml)
+```
+
+## Command-Line Options
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `<target-dir>` | - | Target directory containing toc.yml files | Required |
+| `--dry-run` | - | Preview without writing files | - |
+| `--tree` | `-t` | Show tree structure of llms.txt files | - |
+| `--validate` | `-v` | Validate all llms.txt files | - |
+| `--max-lines` | - | Maximum lines per file | 50 |
+| `--title` | - | Title for root llms.txt | ".NET Documentation" |
+| `--summary` | - | Summary for root llms.txt | "Build applications..." |
+
+## How It Works
+
+1. **Find**: Locate all toc.yml files recursively
+2. **Parse**: Extract items, names, hrefs from YAML
+3. **Flatten**: Handle deep nesting (5+ levels) → curated links
+4. **Generate**: Create llms.txt with title, summary, links
+5. **Limit**: Stay under 50 lines (configurable)
+
+### Line Budget
+
+Per llms.txt file:
+- Header: 4 lines (title + summary)
+- Overview: 2-8 lines (top-level items)
+- Topics: 15-30 lines (nested items)
+- Total: ≤50 lines
 
 ## Features
 
-- ✅ Recursive discovery of child `llms*.txt` files
-- ✅ **Depth-first recursive generation** of llms.txt throughout directory tree
-- ✅ Markdown parsing with support for headings, links, and blockquotes
-- ✅ Automatic extraction of title, summary, and parent links
-- ✅ Curated synthesis of Quick Start, Common Tasks, and Reference sections
-- ✅ 50-line limit validation (configurable)
-- ✅ Link format validation
-- ✅ Tree view of all llms*.txt files in directory structure
-- ✅ Dry-run mode for testing without writing files
-- ✅ Support for custom titles and summaries
+- ✅ YAML to llms.txt conversion (1:1 mapping)
+- ✅ Handles deeply nested structures
+- ✅ Automatic flattening and curation
+- ✅ 50-line limit enforcement
+- ✅ Dry-run preview mode
+- ✅ Tree visualization
+- ✅ Validation mode
 
 ## Installation
 
@@ -41,257 +191,22 @@ dotnet pack
 dotnet tool install --global --add-source ./nupkg LlmsTxtSynthesizer
 ```
 
-After installation, use the `llms-synthesize` command directly.
-
-## Usage
-
-### Show Tree Structure
-
-View all `llms*.txt` files in a directory tree:
-
-```bash
-dotnet run -- ~/git/docs/docs --tree
-```
-
-Example output:
-```
-Directory tree for: /home/user/docs
-
-.../
-  - llms-getting-started.txt (48 lines, 1.2KB)
-core/
-  - llms-fundamentals.txt (50 lines, 1.5KB)
-aspnet/
-  - llms-web.txt (45 lines, 1.3KB)
-  api/
-    - llms-webapi.txt (42 lines, 1.1KB)
-
-Total: 4 files in 3 directories
-```
-
-### Recursive Generation (Depth-First)
-
-**NEW**: Automatically generate `llms.txt` files throughout the entire directory tree, starting from the deepest directories and working up to the root:
-
-```bash
-# Generate all llms.txt files recursively
-dotnet run -- ~/git/docs/docs --recursive
-
-# Dry-run mode (see what would be generated without writing files)
-dotnet run -- ~/git/docs/docs --recursive --dry-run
-```
-
-This will:
-1. Find all directories containing `llms*.txt` files (excluding `llms.txt` itself)
-2. Generate `llms.txt` for each directory, starting from deepest first
-3. Each generated `llms.txt` synthesizes content from its child files
-4. Finally generates the root `llms.txt` that references all subdirectory files
-
-Example output:
-```
-Found 4 directories with llms*.txt files
-Generating in depth-first order:
-
-    [Depth 2] api/advanced/
-      ✓ Generated: llms.txt (11 lines, 1 children)
-    [Depth 2] guides/tutorials/
-      ✓ Generated: llms.txt (11 lines, 1 children)
-  [Depth 1] api/
-    ✓ Generated: llms.txt (15 lines, 2 children)
-  [Depth 1] guides/
-    ✓ Generated: llms.txt (15 lines, 2 children)
-
-[Root] docs/
-  ✓ Generated: llms.txt (24 lines, 8 children)
-
-Summary:
-  Total files generated: 5
-  Root file: /home/user/docs/llms.txt
-```
-
-### Discover Child Files
-
-Find all `llms*.txt` files in subdirectories:
-
-```bash
-dotnet run -- ~/git/docs/docs --discover
-```
-
-Example output:
-```
-Found 9 child llms*.txt files:
-  - core/llms-getting-started.txt
-  - aspnet/llms-web.txt
-  - maui/llms-desktop-mobile.txt
-  ...
-```
-
-### Validate Files
-
-Check that all files meet the 50-line limit and have valid link formats:
-
-```bash
-dotnet run -- ~/git/docs/docs --validate
-```
-
-Example output:
-```
-✓ core/llms-getting-started.txt (48 lines)
-✓ aspnet/llms-web.txt (50 lines)
-
-maui/llms-desktop-mobile.txt:
-  ✗ File exceeds 50 line limit: 53 lines
-```
-
-### Generate Root llms.txt
-
-Synthesize a root `llms.txt` from all child files:
-
-```bash
-# Output to stdout
-dotnet run -- ~/git/docs/docs --generate
-
-# Output to file
-dotnet run -- ~/git/docs/docs --generate --output ~/git/docs/docs/llms.txt
-```
-
-### Custom Configuration
-
-```bash
-dotnet run -- ~/git/docs/docs --generate \
-  --title "My Project Documentation" \
-  --summary "Build amazing things with our platform." \
-  --max-lines 60 \
-  --output ./llms.txt
-```
-
-## How It Works
-
-### 1. Discovery Phase
-
-The tool recursively searches the target directory for files matching `llms*.txt`, excluding the root `llms.txt` in the target directory itself.
-
-### 2. Parsing Phase
-
-Each child file is parsed to extract:
-- **Title**: First level-1 heading (`# Title`)
-- **Summary**: Blockquote content (`> Summary text`)
-- **Parent Link**: Blockquote starting with `Parent:` (`> Parent: [Link](url)`)
-- **Sections**: Level-2 headings with their associated links
-- **Links**: Markdown links in the format `- [Description](url)` or `- [Title](url): Description`
-
-### 3. Synthesis Phase
-
-The root file is generated with the following structure:
-
-```markdown
-# {Title}
-
-> {Summary}
-
-## Quick Start
-{Top 4 links from llms-getting-started.txt if present}
-
-## By Topic (Detailed Guides)
-{Links to all child llms*.txt files with their summaries}
-
-## Common Tasks
-{Top 6 links from "Common Tasks" sections across all files}
-
-## Reference
-{Top 4 links from "Reference" sections across all files}
-```
-
-### 4. Validation
-
-The tool validates:
-- Line count is ≤ max-lines (default: 50)
-- Link format matches the pattern: `- [text](url)` or `- [text](url): description`
-
-## Example Input/Output
-
-### Input: Child File
-
-**File**: `subdir/llms-getting-started.txt`
-
-```markdown
-# Getting Started with .NET
-
-> Parent: [.NET Documentation](../llms.txt)
-
-Learn .NET from scratch, install tools, and build your first applications.
-
-## Absolute Beginners
-
-- [What is .NET?](core/introduction.md): Platform overview and key concepts
-- [Install .NET](core/install/windows.md): Download SDK for Windows, Mac, or Linux
-
-## Your First Apps
-
-- [Console app tutorial](core/get-started.md): Hello World in 5 minutes
-- [Web app tutorial](aspnet/core/tutorials/first-mvc-app): Build a web app
-```
-
-### Output: Generated Root File
-
-```markdown
-# .NET Documentation
-
-> Build applications for any platform with C#, F#, and Visual Basic.
-
-## Quick Start
-
-- [What is .NET?: Platform overview and key concepts](core/introduction.md)
-- [Install .NET: Download SDK for Windows, Mac, or Linux](core/install/windows.md)
-- [Console app tutorial: Hello World in 5 minutes](core/get-started.md)
-- [Web app tutorial: Build a web app](aspnet/core/tutorials/first-mvc-app)
-
-## By Topic (Detailed Guides)
-
-- [Getting Started with .NET](subdir/llms-getting-started.txt): Learn .NET from scratch, install tools, and build your first applications.
-
-## Common Tasks
-
-- [Console app tutorial: Hello World in 5 minutes](core/get-started.md)
-- [Web app tutorial: Build a web app](aspnet/core/tutorials/first-mvc-app)
-
-## Reference
-
-...
-```
-
-## Command-Line Options
-
-| Option | Alias | Description | Default |
-|--------|-------|-------------|---------|
-| `<target-dir>` | - | Target directory containing llms*.txt files | Required |
-| `--recursive` | `-r` | **Recursively generate llms.txt files depth-first** | - |
-| `--tree` | `-t` | **Show tree structure of all llms*.txt files** | - |
-| `--generate` | `-g` | Generate root llms.txt file | - |
-| `--validate` | `-v` | Validate all llms*.txt files | - |
-| `--discover` | `-d` | Discover and list child llms*.txt files | - |
-| `--dry-run` | - | **Show what would be generated without writing files** | - |
-| `--output` | `-o` | Output file for generated content | stdout |
-| `--max-lines` | - | Maximum lines per file | 50 |
-| `--title` | - | Title for root llms.txt | ".NET Documentation" |
-| `--summary` | - | Summary for root llms.txt | "Build applications for any platform with C#, F#, and Visual Basic." |
+After installation, use `llms-synthesize` command directly.
 
 ## Integration with CI/CD
 
 ### GitHub Actions Example
 
-Add validation to your docs repository:
-
 ```yaml
-name: Validate llms.txt files
+name: Generate llms.txt files
 
 on:
-  pull_request:
+  push:
     paths:
-      - '**/llms*.txt'
+      - '**/toc.yml'
 
 jobs:
-  validate:
+  generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -300,82 +215,69 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       
-      - name: Build tool
-        run: dotnet build LlmsTxtSynthesizer/LlmsTxtSynthesizer.csproj
-      
-      - name: Validate llms.txt files
+      - name: Generate llms.txt files
         run: |
           cd LlmsTxtSynthesizer
-          dotnet run -- ../docs --validate
-```
-
-### Pre-commit Hook
-
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-
-cd LlmsTxtSynthesizer
-dotnet run -- ../docs --validate
-
-if [ $? -ne 0 ]; then
-  echo "❌ llms.txt validation failed"
-  exit 1
-fi
-
-echo "✅ llms.txt validation passed"
+          dotnet run -- ../docs
+      
+      - name: Commit changes
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add '**/llms.txt'
+          git commit -m "Update llms.txt files" || exit 0
+          git push
 ```
 
 ## Project Structure
 
 ```
 LlmsTxtSynthesizer/
-├── LlmsTxtSynthesizer.csproj  # Project file with System.CommandLine
-├── Program.cs                  # Main entry point with CLI setup
-├── LlmsFile.cs                 # Data model for llms.txt files
+├── LlmsTxtSynthesizer.csproj  # Project (YamlDotNet, System.CommandLine)
+├── Program.cs                  # CLI entry point
+├── YmlToLlmsConverter.cs       # toc.yml → llms.txt conversion
+├── RecursiveGenerator.cs       # Orchestrates conversion
+├── LlmsSynthesizer.cs          # File discovery (for validation)
 ├── LlmsParser.cs               # Parser for llms.txt format
-├── LlmsSynthesizer.cs          # Core synthesis logic (single directory)
-├── RecursiveGenerator.cs       # Recursive depth-first tree generation
+├── LlmsFile.cs                 # Data model
 └── Validator.cs                # Validation rules
 ```
 
 ## Design Principles
 
-Following the implementation plan:
-
-1. **50-Line Hard Limit**: Enforced through validation
-2. **Radical Curation**: Synthesizer extracts only top links from sections
-3. **Task-Oriented**: Organizes by "Common Tasks" and "Quick Start"
-4. **Two-Level Hierarchy**: Root + topic files (no deeper nesting)
-5. **Parent Linking**: Parsed from child files for navigation
+1. **One File Per Directory**: Each directory gets exactly one llms.txt
+2. **Direct Conversion**: toc.yml → llms.txt (no intermediate files)
+3. **50-Line Hard Limit**: Enforced through intelligent curation
+4. **Radical Curation**: Extract top ~20-30 links from nested YAML
+5. **Task-Oriented**: Organize by "Overview" and "Topics"
 
 ## Requirements
 
 - .NET 10 SDK
+- YamlDotNet package (included)
 - System.CommandLine package (included)
 
-## Contributing
+## Troubleshooting
 
-When adding features, maintain these principles:
+**Problem**: "Directory does not exist"
+- Check that the path is correct
+- Use absolute paths or ensure relative path is valid
 
-1. Keep the synthesized output under 50 lines
-2. Prefer quality over quantity in link extraction
-3. Make curation logic configurable but opinionated by default
-4. Validate all output against the llms.txt specification
+**Problem**: "No toc.yml files found"
+- Verify files are named exactly `toc.yml`
+- Check they're in the target directory tree
 
-## License
-
-MIT License - See LICENSE file
+**Problem**: File exceeds line limit
+- YAML file has too many nested items
+- Tool will warn but still generate
+- Consider restructuring the toc.yml
 
 ## Related
 
 - [llms.txt Specification](https://llmstxt.org)
-- [Implementation Plan](planning/llms_txt_implementation_plan.md)
+- [SINGLE_FILE_APPROACH.md](SINGLE_FILE_APPROACH.md) - Design decisions
 - [.NET Documentation](https://learn.microsoft.com/dotnet)
 
-## Support
+## License
 
-For issues or questions:
-1. Check the implementation plan documentation
-2. Open an issue in the repository
-3. Contact the .NET Docs Team
+MIT License

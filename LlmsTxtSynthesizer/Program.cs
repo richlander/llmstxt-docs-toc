@@ -3,35 +3,19 @@ using LlmsTxtSynthesizer;
 
 var targetDirArg = new Argument<string>(
     name: "target-dir",
-    description: "Target directory containing llms*.txt files");
-
-var generateOption = new Option<bool>(
-    aliases: new[] { "--generate", "-g" },
-    description: "Generate root llms.txt file");
-
-var validateOption = new Option<bool>(
-    aliases: new[] { "--validate", "-v" },
-    description: "Validate all llms*.txt files");
-
-var discoverOption = new Option<bool>(
-    aliases: new[] { "--discover", "-d" },
-    description: "Discover and list child llms*.txt files");
-
-var recursiveOption = new Option<bool>(
-    aliases: new[] { "--recursive", "-r" },
-    description: "Recursively generate llms.txt files depth-first");
+    description: "Target directory containing toc.yml or llms*.txt files");
 
 var dryRunOption = new Option<bool>(
     aliases: new[] { "--dry-run" },
     description: "Show what would be generated without writing files");
 
+var validateOption = new Option<bool>(
+    aliases: new[] { "--validate", "-v" },
+    description: "Validate all llms*.txt files (utility mode)");
+
 var treeOption = new Option<bool>(
     aliases: new[] { "--tree", "-t" },
-    description: "Show tree structure of all llms*.txt files");
-
-var outputOption = new Option<string?>(
-    aliases: new[] { "--output", "-o" },
-    description: "Output file for generated content (default: stdout)");
+    description: "Show tree structure of all llms*.txt files (utility mode)");
 
 var maxLinesOption = new Option<int>(
     aliases: new[] { "--max-lines" },
@@ -48,16 +32,12 @@ var summaryOption = new Option<string>(
     getDefaultValue: () => "Build applications for any platform with C#, F#, and Visual Basic.",
     description: "Summary for root llms.txt");
 
-var rootCommand = new RootCommand("Synthesize root llms.txt from child files")
+var rootCommand = new RootCommand("Generate llms.txt hierarchy from toc.yml files")
 {
     targetDirArg,
-    generateOption,
-    validateOption,
-    discoverOption,
-    recursiveOption,
     dryRunOption,
+    validateOption,
     treeOption,
-    outputOption,
     maxLinesOption,
     titleOption,
     summaryOption
@@ -66,13 +46,9 @@ var rootCommand = new RootCommand("Synthesize root llms.txt from child files")
 rootCommand.SetHandler(async (context) =>
 {
     var targetDir = context.ParseResult.GetValueForArgument(targetDirArg);
-    var generate = context.ParseResult.GetValueForOption(generateOption);
     var validate = context.ParseResult.GetValueForOption(validateOption);
-    var discover = context.ParseResult.GetValueForOption(discoverOption);
-    var recursive = context.ParseResult.GetValueForOption(recursiveOption);
     var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
     var tree = context.ParseResult.GetValueForOption(treeOption);
-    var output = context.ParseResult.GetValueForOption(outputOption);
     var maxLines = context.ParseResult.GetValueForOption(maxLinesOption);
     var title = context.ParseResult.GetValueForOption(titleOption);
     var summary = context.ParseResult.GetValueForOption(summaryOption);
@@ -84,68 +60,17 @@ rootCommand.SetHandler(async (context) =>
         return;
     }
 
-    var synthesizer = new LlmsSynthesizer(targetDir, maxLines);
-
-    // Tree mode
+    // Utility mode: Tree view
     if (tree)
     {
         RecursiveGenerator.ShowTree(targetDir);
         return;
     }
 
-    // Recursive mode
-    if (recursive)
-    {
-        var generator = new RecursiveGenerator(maxLines, title, summary);
-        
-        try
-        {
-            var rootPath = generator.GenerateRecursive(targetDir, dryRun);
-            
-            Console.WriteLine($"\n{'=',-60}");
-            Console.WriteLine($"Summary:");
-            Console.WriteLine($"  Total files generated: {generator.FilesGenerated}");
-            if (!dryRun)
-            {
-                Console.WriteLine($"  Root file: {rootPath}");
-            }
-            else
-            {
-                Console.WriteLine($"  Mode: Dry run (no files written)");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Error during recursive generation: {ex.Message}");
-            context.ExitCode = 1;
-        }
-        
-        return;
-    }
-
-    // Discover mode
-    if (discover)
-    {
-        var childFiles = synthesizer.DiscoverChildFiles();
-        if (childFiles.Count > 0)
-        {
-            Console.WriteLine($"Found {childFiles.Count} child llms*.txt files:");
-            foreach (var path in childFiles)
-            {
-                var relPath = Path.GetRelativePath(targetDir, path);
-                Console.WriteLine($"  - {relPath}");
-            }
-        }
-        else
-        {
-            Console.WriteLine("No child llms*.txt files found.");
-        }
-        return;
-    }
-
-    // Validate mode
+    // Utility mode: Validate
     if (validate)
     {
+        var synthesizer = new LlmsSynthesizer(targetDir, maxLines);
         var childFiles = synthesizer.DiscoverChildFiles();
         var allValid = true;
 
@@ -174,33 +99,33 @@ rootCommand.SetHandler(async (context) =>
         return;
     }
 
-    // Generate mode
-    if (generate)
+    // Default mode: Recursive generation
+    var generator = new RecursiveGenerator(maxLines, title, summary);
+    
+    try
     {
-        synthesizer.LoadChildFiles();
-        var content = synthesizer.GenerateRootContent(title, summary);
-
-        if (!string.IsNullOrEmpty(output))
+        Console.WriteLine("Converting toc.yml files to llms.txt throughout directory tree\n");
+        var rootPath = generator.GenerateRecursive(targetDir, dryRun);
+        
+        Console.WriteLine($"\n{'=',-60}");
+        Console.WriteLine($"Summary:");
+        Console.WriteLine($"  Total files generated: {generator.FilesGenerated}");
+        if (!dryRun)
         {
-            await File.WriteAllTextAsync(output, content);
-            Console.WriteLine($"Generated: {output}");
-
-            var lineCount = content.Trim().Split('\n').Length;
-            Console.WriteLine($"Lines: {lineCount}/{maxLines}");
-            Console.WriteLine($"Child files processed: {synthesizer.ChildFileCount}");
+            Console.WriteLine($"  Root file: {rootPath}");
         }
         else
         {
-            Console.WriteLine(content);
+            Console.WriteLine($"  Mode: Dry run (no files written)");
         }
-
-        return;
     }
-
-    // No mode specified
-    Console.WriteLine("Please specify a mode: --generate, --validate, --discover, --recursive, or --tree");
-    Console.WriteLine("Use --help for more information.");
-    context.ExitCode = 1;
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error during generation: {ex.Message}");
+        context.ExitCode = 1;
+    }
+    
+    await Task.CompletedTask;
 });
 
 return await rootCommand.InvokeAsync(args);

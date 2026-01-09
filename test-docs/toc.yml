@@ -1,0 +1,25 @@
+items:
+- name: Getting Started
+  items:
+  - name: Overview
+    href: overview.md
+  - name: Quickstart
+    href: quickstart.md
+  - name: Installation
+    href: installation.md
+
+- name: Configuration
+  items:
+  - name: Settings
+    href: settings.md
+  - name: Environment Variables
+    href: env-vars.md
+
+- name: Advanced Topics
+  items:
+  - name: Performance Tuning
+    href: performance.md
+  - name: Security
+    href: security.md
+  - name: Troubleshooting
+    href: troubleshooting.md
