@@ -478,9 +478,37 @@ public class StructuralLlmsGenerator
             return "Documentation";
         }
 
+        // Special cases for known acronyms and terms
+        var specialCases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "ai", "AI" },
+            { "iot", "IoT" },
+            { "csharp", "C#" },
+            { "fsharp", "F#" },
+            { "vb", "VB" },
+            { "aspnet", "ASP.NET" },
+            { "ml", "ML" },
+            { "api", "API" },
+            { "sdk", "SDK" },
+            { "cli", "CLI" },
+            { "devops", "DevOps" },
+            { "wcf", "WCF" },
+            { "wpf", "WPF" },
+            { "ef", "EF" }
+        };
+
         var words = input.Split('-', '_', ' ')
             .Where(w => !string.IsNullOrEmpty(w))
-            .Select(w => char.ToUpper(w[0]) + w.Substring(1).ToLower());
+            .Select(w =>
+            {
+                // Check if it's a special case
+                if (specialCases.TryGetValue(w, out var special))
+                {
+                    return special;
+                }
+                // Otherwise normal title case
+                return char.ToUpper(w[0]) + w.Substring(1).ToLower();
+            });
 
         return string.Join(" ", words);
     }
