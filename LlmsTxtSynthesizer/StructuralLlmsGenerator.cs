@@ -384,7 +384,7 @@ public class StructuralLlmsGenerator
         if (childDirs.Any() && lines.Count + 3 < _maxLines)
         {
             lines.Add("");
-            lines.Add("## Related Documentation");
+            lines.Add("## Subdirectories");
             lines.Add("");
 
             foreach (var childDir in childDirs)
