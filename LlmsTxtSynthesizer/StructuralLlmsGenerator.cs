@@ -13,6 +13,7 @@ public class StructuralLlmsGenerator
     private readonly string _githubBaseUrl;
     private readonly Dictionary<string, FileMetadata> _fileIndex = new();
     private readonly Dictionary<string, List<FileMetadata>> _directorFiles = new();
+    private readonly List<(string Dir, int LineCount, int FileCount)> _filesAtLimit = new();
 
     public StructuralLlmsGenerator(int maxLines = 50, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/main")
     {
@@ -60,7 +61,7 @@ public class StructuralLlmsGenerator
 
             try
             {
-                var outputPath = GenerateLlmsTxt(dir, files, rootDir, dryRun);
+                var (outputPath, lineCount) = GenerateLlmsTxt(dir, files, rootDir, dryRun);
                 if (outputPath != null)
                 {
                     if (dryRun)
@@ -69,8 +70,13 @@ public class StructuralLlmsGenerator
                     }
                     else
                     {
-                        var lineCount = File.ReadAllLines(outputPath).Length;
                         Console.WriteLine($"  ✓ Created: llms.txt ({lineCount} lines, {files.Count} files)");
+                        
+                        // Track files at or near limit
+                        if (lineCount >= _maxLines)
+                        {
+                            _filesAtLimit.Add((relPath, lineCount, files.Count));
+                        }
                     }
                     generated++;
                 }
@@ -82,6 +88,20 @@ public class StructuralLlmsGenerator
         }
 
         Console.WriteLine($"\nGenerated {generated} llms.txt files");
+        
+        // Report files at limit
+        if (_filesAtLimit.Any())
+        {
+            Console.WriteLine($"\n{'=',-60}");
+            Console.WriteLine($"⚠ Warning: {_filesAtLimit.Count} file(s) hit the {_maxLines}-line limit:\n");
+            foreach (var (dir, lineCount, fileCount) in _filesAtLimit.OrderByDescending(f => f.FileCount))
+            {
+                Console.WriteLine($"  {dir}");
+                Console.WriteLine($"    {lineCount} lines, {fileCount} files (some content may be truncated)");
+            }
+            Console.WriteLine($"\nConsider splitting these directories or increasing --max-lines");
+        }
+        
         return generated;
     }
 
@@ -180,11 +200,11 @@ public class StructuralLlmsGenerator
         }
     }
 
-    private string? GenerateLlmsTxt(string dir, List<FileMetadata> files, string rootDir, bool dryRun)
+    private (string?, int) GenerateLlmsTxt(string dir, List<FileMetadata> files, string rootDir, bool dryRun)
     {
         if (files.Count == 0)
         {
-            return null;
+            return (null, 0);
         }
 
         var dirName = Path.GetFileName(dir);
@@ -205,13 +225,14 @@ public class StructuralLlmsGenerator
 
         var content = GenerateContent(title, sections, dir);
         var outputPath = Path.Combine(dir, "llms.txt");
+        var lineCount = content.Split('\n').Length;
 
         if (!dryRun)
         {
             File.WriteAllText(outputPath, content);
         }
 
-        return outputPath;
+        return (outputPath, lineCount);
     }
 
     private string GenerateContent(string title, List<Section> sections, string baseDir)
