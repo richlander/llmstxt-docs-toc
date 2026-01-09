@@ -200,6 +200,94 @@ public class StructuralLlmsGenerator
         }
     }
 
+    private int GenerateParentLlmsTxt(string rootDir, bool dryRun)
+    {
+        // Find all directories that have child directories with llms.txt
+        var directoriesWithLlms = _directorFiles.Keys.ToHashSet();
+        var parentDirs = new Dictionary<string, List<string>>(); // parent -> list of child dirs
+
+        foreach (var dir in directoriesWithLlms)
+        {
+            var parent = Path.GetDirectoryName(dir);
+            if (parent != null && Directory.Exists(parent))
+            {
+                // Check if parent has llms.txt-worthy children
+                if (!parentDirs.ContainsKey(parent))
+                {
+                    parentDirs[parent] = new List<string>();
+                }
+                parentDirs[parent].Add(dir);
+            }
+        }
+
+        int generated = 0;
+        foreach (var (parentDir, childDirs) in parentDirs.OrderBy(kvp => kvp.Key))
+        {
+            // Only generate if parent doesn't already have llms.txt from Phase 3
+            if (directoriesWithLlms.Contains(parentDir))
+            {
+                continue; // Already has its own content
+            }
+
+            var relPath = Path.GetRelativePath(rootDir, parentDir);
+            Console.WriteLine($"Processing: {relPath}");
+
+            var parentDirName = Path.GetFileName(parentDir);
+            var title = $"{ConvertToTitleCase(parentDirName)} Docs";
+            
+            var content = GenerateParentContent(title, childDirs, parentDir, rootDir);
+            var outputPath = Path.Combine(parentDir, "llms.txt");
+            var lineCount = content.Split('\n').Length;
+
+            if (!dryRun)
+            {
+                File.WriteAllText(outputPath, content);
+                Console.WriteLine($"  ✓ Created: llms.txt ({lineCount} lines, {childDirs.Count} child sections)");
+            }
+            else
+            {
+                Console.WriteLine($"  ⊘ Would create: llms.txt ({childDirs.Count} child sections)");
+            }
+
+            generated++;
+        }
+
+        return generated;
+    }
+
+    private string GenerateParentContent(string title, List<string> childDirs, string parentDir, string rootDir)
+    {
+        var lines = new List<string>
+        {
+            $"# {title}",
+            ""
+        };
+
+        // Group child directories by their subdirectory name
+        var childLinks = childDirs
+            .Select(dir =>
+            {
+                var childName = Path.GetFileName(dir);
+                var relPath = Path.GetRelativePath(parentDir, dir);
+                var llmsTxtPath = Path.Combine(relPath, "llms.txt").Replace('\\', '/');
+                var gitHubUrl = GetGitHubUrl(Path.Combine(dir, "llms.txt"), rootDir);
+                
+                return (Title: ConvertToTitleCase(childName), Url: gitHubUrl, Path: relPath);
+            })
+            .OrderBy(x => x.Title)
+            .ToList();
+
+        lines.Add("## Documentation Sections");
+        lines.Add("");
+        
+        foreach (var (childTitle, url, path) in childLinks)
+        {
+            lines.Add($"- [{childTitle}]({url})");
+        }
+
+        return string.Join("\n", lines).TrimEnd() + "\n";
+    }
+
     private (string?, int) GenerateLlmsTxt(string dir, List<FileMetadata> files, string rootDir, bool dryRun)
     {
         if (files.Count == 0)
@@ -223,7 +311,13 @@ public class StructuralLlmsGenerator
         // Put ungrouped items first
         sections = sections.OrderBy(s => s.Name == null ? 0 : 1).ThenBy(s => s.Name).ToList();
 
-        var content = GenerateContent(title, sections, dir);
+        // Check if this directory has child directories with llms.txt
+        var childDirs = _directorFiles.Keys
+            .Where(childDir => Path.GetDirectoryName(childDir) == dir)
+            .OrderBy(childDir => childDir)
+            .ToList();
+
+        var content = GenerateContent(title, sections, dir, childDirs, rootDir);
         var outputPath = Path.Combine(dir, "llms.txt");
         var lineCount = content.Split('\n').Length;
 
@@ -235,7 +329,7 @@ public class StructuralLlmsGenerator
         return (outputPath, lineCount);
     }
 
-    private string GenerateContent(string title, List<Section> sections, string baseDir)
+    private string GenerateContent(string title, List<Section> sections, string baseDir, List<string> childDirs, string rootDir)
     {
         var lines = new List<string>
         {
@@ -283,6 +377,26 @@ public class StructuralLlmsGenerator
             if (section != sections.Last() && lines.Count + 2 < _maxLines)
             {
                 lines.Add("");
+            }
+        }
+
+        // Add child llms.txt references if any
+        if (childDirs.Any() && lines.Count + 3 < _maxLines)
+        {
+            lines.Add("");
+            lines.Add("## Related Documentation");
+            lines.Add("");
+
+            foreach (var childDir in childDirs)
+            {
+                if (lines.Count + 1 >= _maxLines)
+                {
+                    break;
+                }
+
+                var childName = Path.GetFileName(childDir);
+                var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
+                lines.Add($"- [{ConvertToTitleCase(childName)}]({llmsTxtUrl})");
             }
         }
 
