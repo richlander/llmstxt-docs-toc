@@ -110,6 +110,15 @@ public class StructuralLlmsGenerator
 
         Console.WriteLine($"\nGenerated {generated} llms.txt files");
 
+        // Phase 4: Generate navigation-only llms.txt for intermediate directories
+        // (directories with no content but with children that have llms.txt)
+        var intermediateGenerated = GenerateIntermediateDirectories(rootDir, dryRun);
+        if (intermediateGenerated > 0)
+        {
+            Console.WriteLine($"Generated {intermediateGenerated} navigation-only llms.txt files");
+            generated += intermediateGenerated;
+        }
+
         // Report files over budget thresholds
         if (_filesAtLimit.Any())
         {
@@ -139,6 +148,210 @@ public class StructuralLlmsGenerator
         }
         
         return generated;
+    }
+
+    /// <summary>
+    /// Generate navigation-only llms.txt for intermediate directories.
+    /// These are directories that have no content themselves but contain children with llms.txt.
+    /// </summary>
+    private int GenerateIntermediateDirectories(string rootDir, bool dryRun)
+    {
+        // Find all directories that have llms.txt (from Phase 3)
+        var directoriesWithContent = _directorFiles.Keys.ToHashSet();
+
+        // Find the common root of all content directories (may be different from rootDir due to relative paths in toc.yml)
+        // But don't go above the git root
+        var gitRoot = GetCachedGitRoot(rootDir);
+        var effectiveRoot = FindCommonRoot(directoriesWithContent, rootDir);
+        if (gitRoot != null && effectiveRoot.Length < gitRoot.Length)
+        {
+            effectiveRoot = gitRoot;
+        }
+
+        // Reload customizations from effective root if it differs from rootDir
+        // This ensures we pick up _llms.json files from intermediate directories
+        if (effectiveRoot != rootDir && _customizations != null)
+        {
+            _customizations = new CustomizationLoader(effectiveRoot);
+            _customizations.LoadAll();
+        }
+
+        // Find intermediate directories: directories that are ancestors of content directories
+        // but don't have content themselves
+        var intermediateDirectories = new Dictionary<string, List<string>>(); // intermediate dir -> child dirs with content
+
+        foreach (var contentDir in directoriesWithContent)
+        {
+            // Walk up from each content directory, looking for gaps
+            var current = Path.GetDirectoryName(contentDir);
+            var child = contentDir;
+
+            while (current != null && current.Length > effectiveRoot.Length && current.StartsWith(effectiveRoot))
+            {
+                if (directoriesWithContent.Contains(current))
+                {
+                    // Hit a directory with content, stop walking up
+                    break;
+                }
+
+                // This is an intermediate directory (has no content)
+                if (!intermediateDirectories.ContainsKey(current))
+                {
+                    intermediateDirectories[current] = new List<string>();
+                }
+
+                // Add the child (either direct content dir or another intermediate that we'll process)
+                // Only add direct children, not grandchildren
+                var directChild = child;
+                if (!intermediateDirectories[current].Contains(directChild))
+                {
+                    intermediateDirectories[current].Add(directChild);
+                }
+
+                child = current;
+                current = Path.GetDirectoryName(current);
+            }
+        }
+
+        // Remove any intermediate that has only intermediate children which themselves have no content
+        // We only want intermediates that eventually lead to content
+        // (This is automatically handled since we only walk up from content directories)
+
+        if (!intermediateDirectories.Any())
+        {
+            return 0;
+        }
+
+        Console.WriteLine($"\nPhase 4: Generating navigation-only files for {intermediateDirectories.Count} intermediate directories...\n");
+
+        int generated = 0;
+
+        // Process from deepest to shallowest so children are available when processing parents
+        foreach (var (dir, children) in intermediateDirectories.OrderByDescending(kvp => kvp.Key.Length))
+        {
+            var relPath = Path.GetRelativePath(rootDir, dir);
+            Console.WriteLine($"Processing: {relPath} (navigation-only)");
+
+            try
+            {
+                var (outputPath, lineCount) = GenerateNavigationOnlyLlmsTxt(dir, children, rootDir, effectiveRoot, dryRun);
+                if (outputPath != null)
+                {
+                    // Add to _directorFiles so parent directories can see it
+                    _directorFiles[dir] = new List<FileMetadata>(); // Empty content, but registered
+
+                    if (dryRun)
+                    {
+                        Console.WriteLine($"  ⊘ Would create: llms.txt (navigation, {children.Count} children)");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  ✓ Created: llms.txt ({lineCount} lines, navigation to {children.Count} children)");
+                    }
+                    generated++;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ✗ Error: {ex.Message}");
+            }
+        }
+
+        return generated;
+    }
+
+    private (string?, int) GenerateNavigationOnlyLlmsTxt(string dir, List<string> childDirs, string rootDir, string customizationRoot, bool dryRun)
+    {
+        var dirName = Path.GetFileName(dir);
+
+        // Use customizationRoot for looking up customizations (may differ from rootDir due to relative paths)
+        var customizationPath = Path.GetRelativePath(customizationRoot, dir);
+        var normalizedCustomizationPath = customizationPath == "." ? "" : customizationPath.Replace('\\', '/');
+
+        // Check for customization
+        var customization = _customizations?.GetCustomization(normalizedCustomizationPath);
+
+        // Get title and description from customization or defaults
+        var title = customization?.Title ?? $"{ConvertToTitleCase(dirName)}";
+        var description = customization?.Description;
+
+        var lines = new List<string>
+        {
+            $"# {title}",
+            ""
+        };
+
+        if (!string.IsNullOrEmpty(description))
+        {
+            lines.Add($"> {description}");
+            lines.Add("");
+        }
+
+        // Add each child directory as a section
+        foreach (var childDir in childDirs.OrderBy(d => d))
+        {
+            var childName = Path.GetFileName(childDir);
+            var childCustomizationPath = Path.GetRelativePath(customizationRoot, childDir).Replace('\\', '/');
+            var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
+
+            var childTitle = childCustomization?.Title ?? ConvertToTitleCase(childName);
+            var childDesc = childCustomization?.Description;
+            var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
+
+            lines.Add($"## {childTitle}");
+            lines.Add("");
+
+            if (!string.IsNullOrEmpty(childDesc))
+            {
+                lines.Add(childDesc);
+                lines.Add("");
+            }
+
+            // Get child's offers and embed them
+            var childOffers = childCustomization?.Offers ?? new List<string>();
+            foreach (var offer in childOffers.Take(4)) // Limit offers for navigation files
+            {
+                var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
+                    f.NormalizedPath.StartsWith(childCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
+                    Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingFile != null)
+                {
+                    var fileUrl = GetGitHubUrl(matchingFile.FullPath, rootDir);
+                    if (!string.IsNullOrEmpty(matchingFile.Description))
+                    {
+                        lines.Add($"- [{matchingFile.Title}]({fileUrl}): {matchingFile.Description}");
+                    }
+                    else
+                    {
+                        lines.Add($"- [{matchingFile.Title}]({fileUrl})");
+                    }
+                }
+            }
+
+            // Add link to full index
+            if (childOffers.Any())
+            {
+                lines.Add($"- [More in {childTitle}...]({llmsTxtUrl})");
+            }
+            else
+            {
+                lines.Add($"- [{childTitle} Documentation Index]({llmsTxtUrl})");
+            }
+
+            lines.Add("");
+        }
+
+        var content = string.Join("\n", lines).TrimEnd() + "\n";
+        var outputPath = Path.Combine(dir, "llms.txt");
+        var lineCount = content.Split('\n').Length;
+
+        if (!dryRun)
+        {
+            File.WriteAllText(outputPath, content);
+        }
+
+        return (outputPath, lineCount);
     }
 
     private void ParseTocFile(string tocFilePath, string rootDir)
@@ -1037,6 +1250,52 @@ public class StructuralLlmsGenerator
         }
 
         return string.Join("\n", lines).TrimEnd() + "\n";
+    }
+
+    private string FindCommonRoot(HashSet<string> directories, string fallback)
+    {
+        if (!directories.Any())
+        {
+            return fallback;
+        }
+
+        // Start with the first directory and find common prefix with all others
+        var common = directories.First();
+
+        foreach (var dir in directories.Skip(1))
+        {
+            // Find common prefix
+            var minLen = Math.Min(common.Length, dir.Length);
+            var i = 0;
+            while (i < minLen && common[i] == dir[i])
+            {
+                i++;
+            }
+
+            common = common.Substring(0, i);
+        }
+
+        // If the common prefix is already a valid directory, use it
+        if (Directory.Exists(common))
+        {
+            return common;
+        }
+
+        // Otherwise, trim to last directory separator
+        // (the common prefix might end mid-directory-name)
+        var lastSep = common.LastIndexOfAny(new[] { '/', '\\' });
+        if (lastSep > 0)
+        {
+            common = common.Substring(0, lastSep);
+        }
+
+        // Ensure we have a valid directory path
+        if (string.IsNullOrEmpty(common) || !Directory.Exists(common))
+        {
+            return fallback;
+        }
+
+        return common;
     }
 
     private void BuildUrlLookup(string rootDir)
