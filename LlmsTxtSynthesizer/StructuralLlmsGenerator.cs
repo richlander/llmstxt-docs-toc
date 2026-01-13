@@ -583,16 +583,16 @@ public class StructuralLlmsGenerator
 
         if (needsOverflow)
         {
-            // Generate overflow file with LOCAL FILES ONLY (not custom sections)
-            // Custom sections (prioritized child content) should stay in main file
-            var localFilesSection = sections.FirstOrDefault(s => s.Name == null);
-            if (localFilesSection != null)
+            // Generate extended index file with additional content (not custom sections)
+            // Custom sections (prioritized child content) stay in main file
+            var additionalSection = sections.FirstOrDefault(s => s.Name == null);
+            if (additionalSection != null)
             {
-                var overflowFileName = $"llms-{dirName}.txt";
+                var overflowFileName = "llms-extended.txt";
                 overflowPath = Path.Combine(dir, overflowFileName);
-                var overflowTitle = $"{ConvertToTitleCase(dirName)} Local Files";
+                var overflowTitle = $"{title} -- Extended Index";
 
-                var overflowSections = new List<Section> { localFilesSection };
+                var overflowSections = new List<Section> { additionalSection };
                 var overflowContent = GenerateOverflowContent(overflowTitle, description, overflowSections, rootDir, _hardBudget * 2);
                 var overflowLineCount = overflowContent.Split('\n').Length;
 
@@ -601,9 +601,9 @@ public class StructuralLlmsGenerator
                     File.WriteAllText(overflowPath, overflowContent);
                 }
 
-                Console.WriteLine($"    → Overflow: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} local files)");
+                Console.WriteLine($"    → Extended: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} additional topics)");
 
-                // Remove local files from main sections - they're now in overflow
+                // Remove additional content from main sections - it's now in extended index
                 // Keep custom sections (prioritized content) in main file
                 sections = sections.Where(s => s.Name != null).ToList();
             }
@@ -948,10 +948,9 @@ public class StructuralLlmsGenerator
                 lines.Add("");
             }
             var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
-            var overflowDisplayName = $"Additional {ConvertToTitleCase(dirName)} Topics";
-            lines.Add($"## {overflowDisplayName}");
+            lines.Add("## Extended Index");
             lines.Add("");
-            lines.Add($"- [Foundational concepts and reference material]({overflowUrl})");
+            lines.Add($"- [Additional topics and reference material]({overflowUrl})");
         }
 
         // Add child directories as embedded sections with their offered content
