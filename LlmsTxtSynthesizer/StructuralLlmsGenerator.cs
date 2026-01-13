@@ -16,7 +16,11 @@ public class StructuralLlmsGenerator
     private readonly Dictionary<string, FileMetadata> _fileIndex = new();
     private readonly Dictionary<string, List<FileMetadata>> _directorFiles = new();
     private readonly List<(string Dir, int LineCount, int FileCount, bool IsOverSoft)> _filesAtLimit = new();
+    private Dictionary<string, FileMetadata> _urlToFile = new();  // Reverse lookup by URL
     private CustomizationLoader? _customizations;
+    private string? _cachedGitRoot;  // Cached git root to avoid repeated directory traversal
+    private bool _gitRootSearched;   // Whether we've already searched for git root
+    private IDeserializer? _yamlDeserializer;  // Cached YAML deserializer
 
     public StructuralLlmsGenerator(int softBudget = 50, int hardBudget = 75, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/llmstxt")
     {
@@ -58,6 +62,9 @@ public class StructuralLlmsGenerator
         }
 
         Console.WriteLine($"Phase 1 complete: Indexed {_fileIndex.Count} unique files\n");
+
+        // Build URL reverse lookup for O(1) access
+        BuildUrlLookup(rootDir);
 
         // Phase 2: Group files by their physical directory
         Console.WriteLine("Phase 2: Grouping files by physical location...");
@@ -138,11 +145,13 @@ public class StructuralLlmsGenerator
     {
         var tocDir = Path.GetDirectoryName(tocFilePath)!;
         var yaml = File.ReadAllText(tocFilePath);
-        
-        var deserializer = new DeserializerBuilder()
+
+        // Use cached deserializer to avoid repeated construction
+        _yamlDeserializer ??= new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
             .Build();
+        var deserializer = _yamlDeserializer;
 
         TocRoot? tocRoot;
         try
@@ -189,13 +198,16 @@ public class StructuralLlmsGenerator
                     // Add or update file metadata
                     if (!_fileIndex.ContainsKey(relativePath))
                     {
+                        var (mdTitle, mdDesc) = ExtractMarkdownMetadata(fullPath);
                         _fileIndex[relativePath] = new FileMetadata
                         {
                             RelativePath = relativePath,
+                            NormalizedPath = relativePath.Replace('\\', '/'),
                             FullPath = fullPath,
                             Title = item.Name ?? Path.GetFileNameWithoutExtension(item.Href),
+                            MarkdownTitle = mdTitle,
                             Category = currentCategory,
-                            Description = ExtractDescriptionFromMarkdown(fullPath)
+                            Description = mdDesc
                         };
                     }
                     else if (currentCategory != null && _fileIndex[relativePath].Category == null)
@@ -382,20 +394,31 @@ public class StructuralLlmsGenerator
         // Check for customization
         var customization = _customizations?.GetCustomization(normalizedDir);
 
-        // Get title - prefer customization, then index.md title, then fallback to dir name
+        // Get title - prefer customization, then index.md frontmatter/H1, then toc.yml name, then dir name
         var dirName = Path.GetFileName(dir);
         var indexFile = files.FirstOrDefault(f =>
             Path.GetFileName(f.RelativePath).Equals("index.md", StringComparison.OrdinalIgnoreCase));
-        var indexTitle = indexFile?.Title;
+        var tocTitle = indexFile?.Title; // Title from toc.yml
 
-        // Use index title if it's meaningful (not just generic names)
+        // Check if toc.yml title is generic (like "Overview", "Index", etc.)
         var genericTitles = new[] { "index", "overview", "introduction", "getting started" };
-        var useIndexTitle = !string.IsNullOrEmpty(indexTitle) &&
-            !genericTitles.Any(g => indexTitle.Equals(g, StringComparison.OrdinalIgnoreCase)) &&
-            !indexTitle.Equals(dirName, StringComparison.OrdinalIgnoreCase);
+        var isTocTitleGeneric = string.IsNullOrEmpty(tocTitle) ||
+            genericTitles.Any(g => tocTitle.Equals(g, StringComparison.OrdinalIgnoreCase)) ||
+            tocTitle.Equals(dirName, StringComparison.OrdinalIgnoreCase);
+
+        // If toc.yml title is generic, use the cached markdown title
+        string? indexTitle = null;
+        if (isTocTitleGeneric && indexFile != null)
+        {
+            indexTitle = indexFile.MarkdownTitle;
+        }
+        else
+        {
+            indexTitle = tocTitle;
+        }
 
         var title = customization?.Title
-            ?? (useIndexTitle ? indexTitle : null)
+            ?? indexTitle
             ?? $"{ConvertToTitleCase(dirName)} Docs";
 
         // Get description from customization
@@ -613,7 +636,7 @@ public class StructuralLlmsGenerator
                 if (lines.Count + 1 >= maxLines)
                     break;
 
-                var fileDesc = _fileIndex.Values.FirstOrDefault(f => GetGitHubUrl(f.FullPath, rootDir) == linkUrl)?.Description;
+                var fileDesc = GetFileByUrl(linkUrl)?.Description;
 
                 if (!string.IsNullOrEmpty(fileDesc))
                 {
@@ -679,7 +702,7 @@ public class StructuralLlmsGenerator
 
                 // Find files from the global index matching this child path
                 var childFiles = _fileIndex.Values
-                    .Where(f => f.RelativePath.Replace('\\', '/').StartsWith(childDirPath + "/", StringComparison.OrdinalIgnoreCase))
+                    .Where(f => f.NormalizedPath.StartsWith(childDirPath + "/", StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
                 if (toInclude.Any())
@@ -717,9 +740,9 @@ public class StructuralLlmsGenerator
                 {
                     // First check if it's a file in the global index
                     var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                        f.RelativePath.Replace('\\', '/').Equals(includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
-                        f.RelativePath.Replace('\\', '/').EndsWith("/" + includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
-                        f.RelativePath.Replace('\\', '/').EndsWith("/" + includePath + "/overview.md", StringComparison.OrdinalIgnoreCase));
+                        f.NormalizedPath.Equals(includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
+                        f.NormalizedPath.EndsWith("/" + includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
+                        f.NormalizedPath.EndsWith("/" + includePath + "/overview.md", StringComparison.OrdinalIgnoreCase));
                     
                     if (matchingFile != null)
                     {
@@ -824,7 +847,7 @@ public class StructuralLlmsGenerator
             foreach (var (linkTitle, linkUrl) in section.Links)
             {
                 // Try to find description from file index
-                var fileDesc = _fileIndex.Values.FirstOrDefault(f => GetGitHubUrl(f.FullPath, baseDir) == linkUrl)?.Description;
+                var fileDesc = GetFileByUrl(linkUrl)?.Description;
 
                 if (!string.IsNullOrEmpty(fileDesc))
                 {
@@ -927,7 +950,7 @@ public class StructuralLlmsGenerator
                         foreach (var subOffer in subDirOffers)
                         {
                             var subMatchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                                f.RelativePath.Replace('\\', '/').StartsWith(subDirRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
+                                f.NormalizedPath.StartsWith(subDirRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
                                 Path.GetFileNameWithoutExtension(f.RelativePath).Equals(subOffer, StringComparison.OrdinalIgnoreCase));
 
                             if (subMatchingFile != null)
@@ -949,7 +972,7 @@ public class StructuralLlmsGenerator
                     {
                         // It's a file - find in the global index
                         var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                            f.RelativePath.Replace('\\', '/').StartsWith(childRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
+                            f.NormalizedPath.StartsWith(childRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
                             Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
 
                         if (matchingFile != null)
@@ -1016,9 +1039,24 @@ public class StructuralLlmsGenerator
         return string.Join("\n", lines).TrimEnd() + "\n";
     }
 
+    private void BuildUrlLookup(string rootDir)
+    {
+        _urlToFile = new Dictionary<string, FileMetadata>(_fileIndex.Count);
+        foreach (var file in _fileIndex.Values)
+        {
+            var url = GetGitHubUrl(file.FullPath, rootDir);
+            _urlToFile[url] = file;
+        }
+    }
+
+    private FileMetadata? GetFileByUrl(string url)
+    {
+        return _urlToFile.TryGetValue(url, out var file) ? file : null;
+    }
+
     private string GetGitHubUrl(string fullPath, string rootDir)
     {
-        var gitRoot = FindGitRoot(rootDir);
+        var gitRoot = GetCachedGitRoot(rootDir);
         if (gitRoot == null)
         {
             return fullPath;
@@ -1028,26 +1066,40 @@ public class StructuralLlmsGenerator
         return $"{_githubBaseUrl}/{repoRelativePath.Replace('\\', '/')}";
     }
 
-    private string? FindGitRoot(string startPath)
+    private string? GetCachedGitRoot(string startPath)
     {
+        if (_gitRootSearched)
+        {
+            return _cachedGitRoot;
+        }
+
+        _gitRootSearched = true;
         var currentDir = new DirectoryInfo(startPath);
         while (currentDir != null)
         {
             if (Directory.Exists(Path.Combine(currentDir.FullName, ".git")))
             {
-                return currentDir.FullName;
+                _cachedGitRoot = currentDir.FullName;
+                return _cachedGitRoot;
             }
             currentDir = currentDir.Parent;
         }
         return null;
     }
 
-    private string ExtractDescriptionFromMarkdown(string filePath)
+    /// <summary>
+    /// Extract both title and description from markdown frontmatter in a single file read.
+    /// </summary>
+    private (string? Title, string Description) ExtractMarkdownMetadata(string filePath)
     {
+        string? title = null;
+        string description = "";
+
         try
         {
             var lines = File.ReadLines(filePath).Take(30).ToList();
             var inFrontmatter = false;
+            var titlePrefix = "title:";
             var descriptionPrefix = "description:";
 
             foreach (var line in lines)
@@ -1061,18 +1113,51 @@ public class StructuralLlmsGenerator
                     }
                     else
                     {
+                        // End of frontmatter
                         break;
                     }
                 }
 
-                if (inFrontmatter && line.TrimStart().StartsWith(descriptionPrefix, StringComparison.OrdinalIgnoreCase))
+                if (inFrontmatter)
                 {
-                    var descLine = line.Substring(line.IndexOf(descriptionPrefix) + descriptionPrefix.Length).Trim();
-                    if (descLine.StartsWith("\"") && descLine.EndsWith("\""))
+                    // Check for title
+                    if (line.TrimStart().StartsWith(titlePrefix, StringComparison.OrdinalIgnoreCase))
                     {
-                        descLine = descLine.Substring(1, descLine.Length - 2);
+                        var titleLine = line.Substring(line.IndexOf(titlePrefix) + titlePrefix.Length).Trim();
+                        // Remove quotes if present
+                        if (titleLine.StartsWith("\"") && titleLine.EndsWith("\""))
+                        {
+                            titleLine = titleLine.Substring(1, titleLine.Length - 2);
+                        }
+                        // Remove common suffixes like " - .NET" or " | Microsoft Learn"
+                        var dashIndex = titleLine.IndexOf(" - ");
+                        if (dashIndex > 0)
+                        {
+                            titleLine = titleLine.Substring(0, dashIndex);
+                        }
+                        var pipeIndex = titleLine.IndexOf(" | ");
+                        if (pipeIndex > 0)
+                        {
+                            titleLine = titleLine.Substring(0, pipeIndex);
+                        }
+                        title = titleLine;
                     }
-                    return descLine;
+                    // Check for description
+                    else if (line.TrimStart().StartsWith(descriptionPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var descLine = line.Substring(line.IndexOf(descriptionPrefix) + descriptionPrefix.Length).Trim();
+                        if (descLine.StartsWith("\"") && descLine.EndsWith("\""))
+                        {
+                            descLine = descLine.Substring(1, descLine.Length - 2);
+                        }
+                        description = descLine;
+                    }
+                }
+
+                // Also check for H1 heading as fallback for title (after frontmatter)
+                if (!inFrontmatter && line.StartsWith("# ") && title == null)
+                {
+                    title = line.Substring(2).Trim();
                 }
             }
         }
@@ -1081,7 +1166,7 @@ public class StructuralLlmsGenerator
             // Ignore errors
         }
 
-        return string.Empty;
+        return (title, description);
     }
 
     private string ConvertToTitleCase(string input)
@@ -1131,8 +1216,10 @@ public class StructuralLlmsGenerator
 internal class FileMetadata
 {
     public string RelativePath { get; set; } = "";
+    public string NormalizedPath { get; set; } = "";  // Path with forward slashes, computed once
     public string FullPath { get; set; } = "";
-    public string Title { get; set; } = "";
+    public string Title { get; set; } = "";           // Title from toc.yml
+    public string? MarkdownTitle { get; set; }        // Title extracted from markdown frontmatter
     public string? Category { get; set; }
     public string Description { get; set; } = "";
 }
