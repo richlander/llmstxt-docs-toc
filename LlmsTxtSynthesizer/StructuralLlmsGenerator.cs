@@ -946,6 +946,7 @@ public class StructuralLlmsGenerator
         if (childDirs.Any() || overflowPath != null)
         {
             // Build skip list from section definitions (already rendered by BuildCustomSections)
+            // Only skip exact matches - deep links to subdirectories don't cover the parent
             var coveredBySection = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (sectionDefs != null)
             {
@@ -953,16 +954,7 @@ public class StructuralLlmsGenerator
                 {
                     if (secDef.Path != null)
                     {
-                        // Mark both the exact path and parent directories as covered
                         coveredBySection.Add(secDef.Path);
-                        // If section points to a subdirectory, mark the parent too
-                        var parentPath = secDef.Path.Contains('/')
-                            ? secDef.Path.Substring(0, secDef.Path.IndexOf('/'))
-                            : null;
-                        if (parentPath != null)
-                        {
-                            coveredBySection.Add(parentPath);
-                        }
                     }
                 }
             }
