@@ -995,12 +995,20 @@ public class StructuralLlmsGenerator
                     lines.Add($"- [{topicCount} more topics in {title}]({overflowUrl})");
                 }
 
-                // Then all remaining children as index links
+                // Then all remaining children as index links (with shortDescription if available)
                 foreach (var (childDir, childName, childCustomization) in indexChildren)
                 {
                     var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                     var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
-                    lines.Add($"- [{displayName}]({llmsTxtUrl})");
+                    var shortDesc = childCustomization?.ShortDescription;
+                    if (!string.IsNullOrEmpty(shortDesc))
+                    {
+                        lines.Add($"- [{displayName}]({llmsTxtUrl}): {shortDesc}");
+                    }
+                    else
+                    {
+                        lines.Add($"- [{displayName}]({llmsTxtUrl})");
+                    }
                 }
             }
         }

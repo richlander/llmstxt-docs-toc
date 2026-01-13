@@ -20,10 +20,16 @@ public class LlmsCustomization
     public string? Title { get; set; }
 
     /// <summary>
-    /// Override description text (rendered as blockquote). Falls back to .md frontmatter.
+    /// Override description text (rendered as blockquote under H1/H2). Falls back to .md frontmatter.
     /// </summary>
     [JsonPropertyName("description")]
     public string? Description { get; set; }
+
+    /// <summary>
+    /// Short description for use in link text (e.g., in Topic Indices).
+    /// </summary>
+    [JsonPropertyName("shortDescription")]
+    public string? ShortDescription { get; set; }
 
     /// <summary>
     /// Important preamble text (warnings, cautions) rendered prominently after description.
