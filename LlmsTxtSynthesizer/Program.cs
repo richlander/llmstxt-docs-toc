@@ -3,7 +3,7 @@ using LlmsTxtSynthesizer;
 
 var targetDirArg = new Argument<string>(
     name: "target-dir",
-    description: "Target directory containing toc.yml or llms*.txt files");
+    description: "Target directory containing markdown files to generate llms.txt from");
 
 var dryRunOption = new Option<bool>(
     aliases: new[] { "--dry-run" },
@@ -37,7 +37,7 @@ var summaryOption = new Option<string>(
     getDefaultValue: () => "Build applications for any platform with C#, F#, and Visual Basic.",
     description: "Summary for root llms.txt");
 
-var rootCommand = new RootCommand("Generate llms.txt files based on physical file structure from toc.yml references")
+var rootCommand = new RootCommand("Generate llms.txt files based on physical file structure from markdown files")
 {
     targetDirArg,
     dryRunOption,
@@ -70,7 +70,7 @@ rootCommand.SetHandler(async (context) =>
     // Utility mode: Tree view
     if (tree)
     {
-        RecursiveGenerator.ShowTree(targetDir);
+        ShowTree(targetDir);
         return;
     }
 
@@ -124,3 +124,41 @@ rootCommand.SetHandler(async (context) =>
 });
 
 return await rootCommand.InvokeAsync(args);
+
+static void ShowTree(string targetDir)
+{
+    Console.WriteLine($"Directory tree for: {targetDir}\n");
+
+    var allFiles = Directory.GetFiles(targetDir, "llms*.txt", SearchOption.AllDirectories)
+        .OrderBy(f => f)
+        .ToList();
+
+    if (allFiles.Count == 0)
+    {
+        Console.WriteLine("No llms*.txt files found.");
+        return;
+    }
+
+    var dirGroups = allFiles.GroupBy(f => Path.GetDirectoryName(f)!);
+
+    foreach (var group in dirGroups)
+    {
+        var dir = group.Key;
+        var relPath = Path.GetRelativePath(targetDir, dir);
+        var depth = relPath == "." ? 0 : relPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length;
+        var indent = new string(' ', depth * 2);
+
+        Console.WriteLine($"{indent}{(relPath == "." ? "." : Path.GetFileName(dir))}/");
+
+        foreach (var file in group.OrderBy(f => f))
+        {
+            var fileName = Path.GetFileName(file);
+            var fileSize = new FileInfo(file).Length;
+            var lineCount = File.ReadAllLines(file).Length;
+
+            Console.WriteLine($"{indent}  - {fileName} ({lineCount} lines, {fileSize} bytes)");
+        }
+    }
+
+    Console.WriteLine($"\nTotal: {allFiles.Count} files in {dirGroups.Count()} directories");
+}

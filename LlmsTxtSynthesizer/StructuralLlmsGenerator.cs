@@ -1,11 +1,8 @@
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-
 namespace LlmsTxtSynthesizer;
 
 /// <summary>
-/// Generates llms.txt files based on physical file structure rather than toc.yml presentation.
-/// Files appear in llms.txt where they physically exist, not where toc.yml references them.
+/// Generates llms.txt files based on physical file structure.
+/// Discovers markdown files directly and extracts metadata from frontmatter.
 /// Supports _llms.json customization files for overrides and structural adjustments.
 /// </summary>
 public class StructuralLlmsGenerator
@@ -20,7 +17,6 @@ public class StructuralLlmsGenerator
     private CustomizationLoader? _customizations;
     private string? _cachedGitRoot;  // Cached git root to avoid repeated directory traversal
     private bool _gitRootSearched;   // Whether we've already searched for git root
-    private IDeserializer? _yamlDeserializer;  // Cached YAML deserializer
     private string? _customizationRoot;  // Root directory for customization path resolution
 
     public StructuralLlmsGenerator(int softBudget = 50, int hardBudget = 75, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/llmstxt")
@@ -40,8 +36,8 @@ public class StructuralLlmsGenerator
             throw new DirectoryNotFoundException($"Directory not found: {rootDir}");
         }
 
-        Console.WriteLine("Phase 1: Discovering and parsing all toc.yml files...");
-        
+        Console.WriteLine("Phase 1: Discovering markdown files...");
+
         // Load customizations first
         _customizations = new CustomizationLoader(rootDir);
         _customizations.LoadAll();
@@ -50,20 +46,11 @@ public class StructuralLlmsGenerator
         {
             Console.WriteLine($"Found {_customizations.Count} _llms.json customization file(s)");
         }
-        
-        var tocFiles = Directory.GetFiles(rootDir, "toc.yml", SearchOption.AllDirectories)
-            .OrderBy(f => f)
-            .ToList();
-        
-        Console.WriteLine($"Found {tocFiles.Count} toc.yml files\n");
 
-        // Phase 1: Parse all toc.yml files and build global index
-        foreach (var tocFile in tocFiles)
-        {
-            ParseTocFile(tocFile, rootDir);
-        }
+        // Phase 1: Discover all markdown files and build global index
+        DiscoverMarkdownFiles(rootDir);
 
-        Console.WriteLine($"Phase 1 complete: Indexed {_fileIndex.Count} unique files\n");
+        Console.WriteLine($"Phase 1 complete: Indexed {_fileIndex.Count} markdown files\n");
 
         // Build URL reverse lookup for O(1) access
         BuildUrlLookup(rootDir);
@@ -72,17 +59,6 @@ public class StructuralLlmsGenerator
         Console.WriteLine("Phase 2: Grouping files by physical location...");
         GroupFilesByDirectory(rootDir);
         Console.WriteLine($"Phase 2 complete: {_directorFiles.Count} directories with content\n");
-
-        // Reload customizations from effective root if content spans outside rootDir
-        // This ensures we pick up _llms.json files from directories reached via relative paths in toc.yml
-        var effectiveRootForCustomizations = FindCommonRoot(_directorFiles.Keys.ToHashSet(), rootDir);
-        if (effectiveRootForCustomizations != rootDir)
-        {
-            _customizations = new CustomizationLoader(effectiveRootForCustomizations);
-            _customizations.LoadAll();
-            _customizationRoot = effectiveRootForCustomizations;
-            Console.WriteLine($"Reloaded customizations from {Path.GetRelativePath(rootDir, effectiveRootForCustomizations)}: Found {_customizations.Count} _llms.json file(s)\n");
-        }
 
         // Phase 3: Generate llms.txt for each directory
         Console.WriteLine("Phase 3: Generating llms.txt files...\n");
@@ -159,8 +135,46 @@ public class StructuralLlmsGenerator
                 }
             }
         }
-        
+
         return generated;
+    }
+
+    /// <summary>
+    /// Discover all markdown files in the directory tree and build the file index.
+    /// </summary>
+    private void DiscoverMarkdownFiles(string rootDir)
+    {
+        var mdFiles = Directory.GetFiles(rootDir, "*.md", SearchOption.AllDirectories)
+            .OrderBy(f => f)
+            .ToList();
+
+        foreach (var mdFile in mdFiles)
+        {
+            var relativePath = Path.GetRelativePath(rootDir, mdFile);
+
+            // Skip files in common non-documentation directories
+            if (relativePath.Contains("node_modules") ||
+                relativePath.Contains(".git") ||
+                relativePath.Contains("bin/") ||
+                relativePath.Contains("obj/"))
+            {
+                continue;
+            }
+
+            var (title, description) = ExtractMarkdownMetadata(mdFile);
+            var fileName = Path.GetFileNameWithoutExtension(mdFile);
+
+            _fileIndex[relativePath] = new FileMetadata
+            {
+                RelativePath = relativePath,
+                NormalizedPath = relativePath.Replace('\\', '/'),
+                FullPath = mdFile,
+                Title = title ?? ConvertToTitleCase(fileName),
+                MarkdownTitle = title,
+                Category = null, // No category without toc.yml hierarchy
+                Description = description
+            };
+        }
     }
 
     /// <summary>
@@ -172,7 +186,7 @@ public class StructuralLlmsGenerator
         // Find all directories that have llms.txt (from Phase 3)
         var directoriesWithContent = _directorFiles.Keys.ToHashSet();
 
-        // Find the common root of all content directories (may be different from rootDir due to relative paths in toc.yml)
+        // Find the common root of all content directories
         // But don't go above the git root
         var gitRoot = GetCachedGitRoot(rootDir);
         var effectiveRoot = FindCommonRoot(directoriesWithContent, rootDir);
@@ -226,10 +240,6 @@ public class StructuralLlmsGenerator
             }
         }
 
-        // Remove any intermediate that has only intermediate children which themselves have no content
-        // We only want intermediates that eventually lead to content
-        // (This is automatically handled since we only walk up from content directories)
-
         if (!intermediateDirectories.Any())
         {
             return 0;
@@ -277,7 +287,7 @@ public class StructuralLlmsGenerator
     {
         var dirName = Path.GetFileName(dir);
 
-        // Use customizationRoot for looking up customizations (may differ from rootDir due to relative paths)
+        // Use customizationRoot for looking up customizations
         var customizationPath = Path.GetRelativePath(customizationRoot, dir);
         var normalizedCustomizationPath = customizationPath == "." ? "" : customizationPath.Replace('\\', '/');
 
@@ -367,109 +377,24 @@ public class StructuralLlmsGenerator
         return (outputPath, lineCount);
     }
 
-    private void ParseTocFile(string tocFilePath, string rootDir)
-    {
-        var tocDir = Path.GetDirectoryName(tocFilePath)!;
-        var yaml = File.ReadAllText(tocFilePath);
-
-        // Use cached deserializer to avoid repeated construction
-        _yamlDeserializer ??= new DeserializerBuilder()
-            .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-        var deserializer = _yamlDeserializer;
-
-        TocRoot? tocRoot;
-        try
-        {
-            tocRoot = deserializer.Deserialize<TocRoot>(yaml);
-        }
-        catch
-        {
-            try
-            {
-                var items = deserializer.Deserialize<List<TocItem>>(yaml);
-                tocRoot = new TocRoot { Items = items };
-            }
-            catch
-            {
-                return;
-            }
-        }
-
-        if (tocRoot?.Items == null || tocRoot.Items.Count == 0)
-        {
-            return;
-        }
-
-        // Extract all file references with their context
-        ExtractFileReferences(tocRoot.Items, tocDir, rootDir, null);
-    }
-
-    private void ExtractFileReferences(List<TocItem> items, string tocDir, string rootDir, string? category)
-    {
-        foreach (var item in items)
-        {
-            // Determine category from parent item if it has children
-            var currentCategory = (item.Items != null && item.Items.Count > 0) ? item.Name : category;
-
-            if (!string.IsNullOrEmpty(item.Href) && item.Href.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            {
-                var fullPath = Path.GetFullPath(Path.Combine(tocDir, item.Href));
-                
-                if (File.Exists(fullPath))
-                {
-                    var relativePath = Path.GetRelativePath(rootDir, fullPath);
-                    
-                    // Add or update file metadata
-                    if (!_fileIndex.ContainsKey(relativePath))
-                    {
-                        var (mdTitle, mdDesc) = ExtractMarkdownMetadata(fullPath);
-                        _fileIndex[relativePath] = new FileMetadata
-                        {
-                            RelativePath = relativePath,
-                            NormalizedPath = relativePath.Replace('\\', '/'),
-                            FullPath = fullPath,
-                            Title = item.Name ?? Path.GetFileNameWithoutExtension(item.Href),
-                            MarkdownTitle = mdTitle,
-                            Category = currentCategory,
-                            Description = mdDesc
-                        };
-                    }
-                    else if (currentCategory != null && _fileIndex[relativePath].Category == null)
-                    {
-                        // Update category if we didn't have one before
-                        _fileIndex[relativePath].Category = currentCategory;
-                    }
-                }
-            }
-
-            // Recursively process nested items
-            if (item.Items != null && item.Items.Count > 0)
-            {
-                ExtractFileReferences(item.Items, tocDir, rootDir, currentCategory);
-            }
-        }
-    }
-
     private void GroupFilesByDirectory(string rootDir)
     {
         foreach (var (_, metadata) in _fileIndex)
         {
             var dir = Path.GetDirectoryName(metadata.FullPath)!;
-            
+
             // Check if this file should be promoted
             var promotedDir = GetPromotedDirectory(metadata.RelativePath, rootDir);
             if (promotedDir != null)
             {
                 dir = promotedDir;
             }
-            
+
             if (!_directorFiles.ContainsKey(dir))
             {
                 _directorFiles[dir] = new List<FileMetadata>();
             }
-            
+
             _directorFiles[dir].Add(metadata);
         }
     }
@@ -477,26 +402,26 @@ public class StructuralLlmsGenerator
     private string? GetPromotedDirectory(string relativePath, string rootDir)
     {
         if (_customizations == null) return null;
-        
+
         // Check all customizations for promote rules that match this file
         var normalizedPath = relativePath.Replace('\\', '/');
-        
+
         // Walk up the directory tree looking for promote rules
         var parts = normalizedPath.Split('/');
         for (int i = 0; i < parts.Length - 1; i++)
         {
             var dirPath = string.Join("/", parts.Take(i + 1));
             var customization = _customizations.GetCustomization(dirPath);
-            
+
             if (customization?.Promote != null)
             {
                 foreach (var rule in customization.Promote)
                 {
                     var promotePath = rule.Path.Replace('\\', '/');
-                    var fullPromotePath = string.IsNullOrEmpty(dirPath) 
-                        ? promotePath 
+                    var fullPromotePath = string.IsNullOrEmpty(dirPath)
+                        ? promotePath
                         : $"{dirPath}/{promotePath}";
-                    
+
                     if (normalizedPath.StartsWith(fullPromotePath, StringComparison.OrdinalIgnoreCase))
                     {
                         // This file matches a promote rule - move it up N levels
@@ -515,96 +440,8 @@ public class StructuralLlmsGenerator
                 }
             }
         }
-        
+
         return null;
-    }
-
-    private int GenerateParentLlmsTxt(string rootDir, bool dryRun)
-    {
-        // Find all directories that have child directories with llms.txt
-        var directoriesWithLlms = _directorFiles.Keys.ToHashSet();
-        var parentDirs = new Dictionary<string, List<string>>(); // parent -> list of child dirs
-
-        foreach (var dir in directoriesWithLlms)
-        {
-            var parent = Path.GetDirectoryName(dir);
-            if (parent != null && Directory.Exists(parent))
-            {
-                // Check if parent has llms.txt-worthy children
-                if (!parentDirs.ContainsKey(parent))
-                {
-                    parentDirs[parent] = new List<string>();
-                }
-                parentDirs[parent].Add(dir);
-            }
-        }
-
-        int generated = 0;
-        foreach (var (parentDir, childDirs) in parentDirs.OrderBy(kvp => kvp.Key))
-        {
-            // Only generate if parent doesn't already have llms.txt from Phase 3
-            if (directoriesWithLlms.Contains(parentDir))
-            {
-                continue; // Already has its own content
-            }
-
-            var relPath = Path.GetRelativePath(rootDir, parentDir);
-            Console.WriteLine($"Processing: {relPath}");
-
-            var parentDirName = Path.GetFileName(parentDir);
-            var title = $"{ConvertToTitleCase(parentDirName)} Docs";
-            
-            var content = GenerateParentContent(title, childDirs, parentDir, rootDir);
-            var outputPath = Path.Combine(parentDir, "llms.txt");
-            var lineCount = content.Split('\n').Length;
-
-            if (!dryRun)
-            {
-                File.WriteAllText(outputPath, content);
-                Console.WriteLine($"  ✓ Created: llms.txt ({lineCount} lines, {childDirs.Count} child sections)");
-            }
-            else
-            {
-                Console.WriteLine($"  ⊘ Would create: llms.txt ({childDirs.Count} child sections)");
-            }
-
-            generated++;
-        }
-
-        return generated;
-    }
-
-    private string GenerateParentContent(string title, List<string> childDirs, string parentDir, string rootDir)
-    {
-        var lines = new List<string>
-        {
-            $"# {title}",
-            ""
-        };
-
-        // Group child directories by their subdirectory name
-        var childLinks = childDirs
-            .Select(dir =>
-            {
-                var childName = Path.GetFileName(dir);
-                var relPath = Path.GetRelativePath(parentDir, dir);
-                var llmsTxtPath = Path.Combine(relPath, "llms.txt").Replace('\\', '/');
-                var gitHubUrl = GetGitHubUrl(Path.Combine(dir, "llms.txt"), rootDir);
-                
-                return (Title: ConvertToTitleCase(childName), Url: gitHubUrl, Path: relPath);
-            })
-            .OrderBy(x => x.Title)
-            .ToList();
-
-        lines.Add("## Documentation Sections");
-        lines.Add("");
-        
-        foreach (var (childTitle, url, path) in childLinks)
-        {
-            lines.Add($"- [{childTitle}]({url})");
-        }
-
-        return string.Join("\n", lines).TrimEnd() + "\n";
     }
 
     private (string?, int) GenerateLlmsTxt(string dir, List<FileMetadata> files, string rootDir, bool dryRun)
@@ -614,38 +451,34 @@ public class StructuralLlmsGenerator
             return (null, 0);
         }
 
-        // Use customizationRoot for path resolution (may differ from rootDir when content spans trees)
+        // Use customizationRoot for path resolution
         var customizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, dir);
         var normalizedCustomizationPath = customizationPath == "." ? "" : customizationPath.Replace('\\', '/');
 
         // Check for customization
         var customization = _customizations?.GetCustomization(normalizedCustomizationPath);
 
-        // Get title - prefer customization, then index.md frontmatter/H1, then toc.yml name, then dir name
+        // Get title - prefer customization, then index.md frontmatter/H1, then dir name
         var dirName = Path.GetFileName(dir);
         var indexFile = files.FirstOrDefault(f =>
             Path.GetFileName(f.RelativePath).Equals("index.md", StringComparison.OrdinalIgnoreCase));
-        var tocTitle = indexFile?.Title; // Title from toc.yml
 
-        // Check if toc.yml title is generic (like "Overview", "Index", etc.)
+        // Check if index title is generic (like "Overview", "Index", etc.)
         var genericTitles = new[] { "index", "overview", "introduction", "getting started" };
-        var isTocTitleGeneric = string.IsNullOrEmpty(tocTitle) ||
-            genericTitles.Any(g => tocTitle.Equals(g, StringComparison.OrdinalIgnoreCase)) ||
-            tocTitle.Equals(dirName, StringComparison.OrdinalIgnoreCase);
+        var indexTitle = indexFile?.MarkdownTitle;
+        var isIndexTitleGeneric = string.IsNullOrEmpty(indexTitle) ||
+            genericTitles.Any(g => indexTitle.Equals(g, StringComparison.OrdinalIgnoreCase)) ||
+            indexTitle.Equals(dirName, StringComparison.OrdinalIgnoreCase);
 
-        // If toc.yml title is generic, use the cached markdown title
-        string? indexTitle = null;
-        if (isTocTitleGeneric && indexFile != null)
+        // If index title is generic, fall back to directory name
+        string? effectiveTitle = null;
+        if (!isIndexTitleGeneric && indexFile != null)
         {
-            indexTitle = indexFile.MarkdownTitle;
-        }
-        else
-        {
-            indexTitle = tocTitle;
+            effectiveTitle = indexFile.MarkdownTitle;
         }
 
         var title = customization?.Title
-            ?? indexTitle
+            ?? effectiveTitle
             ?? $"{ConvertToTitleCase(dirName)} Docs";
 
         // Get description from customization
@@ -709,35 +542,15 @@ public class StructuralLlmsGenerator
         }
         else
         {
-            // Group files by category (default behavior)
-            var rawSections = filteredFiles
-                .GroupBy(f => f.Category)
-                .Select(g => new Section
-                {
-                    Name = g.Key, // null for ungrouped
-                    Links = g.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
-                })
-                .ToList();
-
-            // Merge all "top-level" sections: null category OR category matches title (would have no header)
-            var titleWithoutDocs = title.Replace(" Docs", "");
-            var topLevelLinks = rawSections
-                .Where(s => s.Name == null || s.Name.Equals(titleWithoutDocs, StringComparison.OrdinalIgnoreCase))
-                .SelectMany(s => s.Links)
-                .ToList();
-
-            var namedSections = rawSections
-                .Where(s => s.Name != null && !s.Name.Equals(titleWithoutDocs, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(s => s.Name)
-                .ToList();
-
-            // Build final section list: top-level first (no header), then named sections
-            sections = new List<Section>();
-            if (topLevelLinks.Any())
+            // Default: all files in a single ungrouped section (no category hierarchy without toc.yml)
+            sections = new List<Section>
             {
-                sections.Add(new Section { Name = null, Links = topLevelLinks });
-            }
-            sections.AddRange(namedSections);
+                new Section
+                {
+                    Name = null,
+                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
+                }
+            };
         }
 
         // Check if this directory has child directories with llms.txt
@@ -884,16 +697,16 @@ public class StructuralLlmsGenerator
         return string.Join("\n", lines).TrimEnd() + "\n";
     }
 
-    private List<Section> BuildCustomSections(List<SectionDefinition> customSections, 
+    private List<Section> BuildCustomSections(List<SectionDefinition> customSections,
         List<FileMetadata> localFiles, string rootDir, string currentDir)
     {
         var sections = new List<(Section Section, int Priority)>();
-        
+
         foreach (var sectionDef in customSections)
         {
             var priority = sectionDef.Priority ?? 0;
             var links = new List<(string Title, string Url)>();
-            
+
             if (sectionDef.Path != null)
             {
                 // This section references a child directory - link to its llms.txt
@@ -992,7 +805,7 @@ public class StructuralLlmsGenerator
                         f.NormalizedPath.Equals(includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
                         f.NormalizedPath.EndsWith("/" + includePath + ".md", StringComparison.OrdinalIgnoreCase) ||
                         f.NormalizedPath.EndsWith("/" + includePath + "/overview.md", StringComparison.OrdinalIgnoreCase));
-                    
+
                     if (matchingFile != null)
                     {
                         links.Add((matchingFile.Title, GetGitHubUrl(matchingFile.FullPath, rootDir)));
@@ -1006,20 +819,20 @@ public class StructuralLlmsGenerator
                         links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir)));
                     }
                 }
-                
+
                 var section = new Section
                 {
                     Name = sectionDef.Name,
                     Links = links
                 };
-                
+
                 if (links.Any())
                 {
                     sections.Add((section, priority));
                 }
             }
         }
-        
+
         // Sort by priority (higher first), then by name
         return sections
             .OrderByDescending(s => s.Priority)
@@ -1059,7 +872,7 @@ public class StructuralLlmsGenerator
             var guidanceTitle = guidance.Title ?? "Guidance for AI Assistants";
             lines.Add($"## {guidanceTitle}");
             lines.Add("");
-            
+
             if (!string.IsNullOrEmpty(guidance.Intro))
             {
                 lines.Add(guidance.Intro);
@@ -1524,7 +1337,7 @@ internal class FileMetadata
     public string RelativePath { get; set; } = "";
     public string NormalizedPath { get; set; } = "";  // Path with forward slashes, computed once
     public string FullPath { get; set; } = "";
-    public string Title { get; set; } = "";           // Title from toc.yml
+    public string Title { get; set; } = "";           // Title from markdown frontmatter
     public string? MarkdownTitle { get; set; }        // Title extracted from markdown frontmatter
     public string? Category { get; set; }
     public string Description { get; set; } = "";
