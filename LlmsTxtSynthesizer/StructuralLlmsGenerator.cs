@@ -537,20 +537,25 @@ public class StructuralLlmsGenerator
 
         if (customSections.Any())
         {
-            // Use custom section definitions
+            // Use custom section definitions (for child directories)
             sections = BuildCustomSections(customSections, filteredFiles, rootDir, normalizedCustomizationPath);
         }
         else
         {
-            // Default: all files in a single ungrouped section (no category hierarchy without toc.yml)
-            sections = new List<Section>
+            sections = new List<Section>();
+        }
+
+        // Always include local files as an ungrouped section (even when custom sections exist)
+        // Custom sections are for organizing child directories - local files are separate
+        if (filteredFiles.Any())
+        {
+            var localSection = new Section
             {
-                new Section
-                {
-                    Name = null,
-                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
-                }
+                Name = null,
+                Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
             };
+            // Insert local files at the beginning
+            sections.Insert(0, localSection);
         }
 
         // Check if this directory has child directories with llms.txt
