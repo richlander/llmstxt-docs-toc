@@ -583,23 +583,30 @@ public class StructuralLlmsGenerator
 
         if (needsOverflow)
         {
-            // Generate overflow file with local content (2x hard budget)
-            var overflowFileName = $"llms-{dirName}.txt";
-            overflowPath = Path.Combine(dir, overflowFileName);
-            var overflowTitle = $"{ConvertToTitleCase(dirName)} Overview";
-
-            var overflowContent = GenerateOverflowContent(overflowTitle, description, sections, rootDir, _hardBudget * 2);
-            var overflowLineCount = overflowContent.Split('\n').Length;
-
-            if (!dryRun)
+            // Generate overflow file with LOCAL FILES ONLY (not custom sections)
+            // Custom sections (prioritized child content) should stay in main file
+            var localFilesSection = sections.FirstOrDefault(s => s.Name == null);
+            if (localFilesSection != null)
             {
-                File.WriteAllText(overflowPath, overflowContent);
+                var overflowFileName = $"llms-{dirName}.txt";
+                overflowPath = Path.Combine(dir, overflowFileName);
+                var overflowTitle = $"{ConvertToTitleCase(dirName)} Local Files";
+
+                var overflowSections = new List<Section> { localFilesSection };
+                var overflowContent = GenerateOverflowContent(overflowTitle, description, overflowSections, rootDir, _hardBudget * 2);
+                var overflowLineCount = overflowContent.Split('\n').Length;
+
+                if (!dryRun)
+                {
+                    File.WriteAllText(overflowPath, overflowContent);
+                }
+
+                Console.WriteLine($"    → Overflow: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} local files)");
+
+                // Remove local files from main sections - they're now in overflow
+                // Keep custom sections (prioritized content) in main file
+                sections = sections.Where(s => s.Name != null).ToList();
             }
-
-            Console.WriteLine($"    → Overflow: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} files)");
-
-            // Clear sections for main file - local content goes in overflow
-            sections = new List<Section>();
         }
 
         // Generate main llms.txt (with or without local content depending on overflow)
@@ -941,10 +948,10 @@ public class StructuralLlmsGenerator
                 lines.Add("");
             }
             var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
-            var overflowDisplayName = $"{ConvertToTitleCase(dirName)} Overview";
+            var overflowDisplayName = $"Additional {ConvertToTitleCase(dirName)} Topics";
             lines.Add($"## {overflowDisplayName}");
             lines.Add("");
-            lines.Add($"- [Documentation files in this directory]({overflowUrl})");
+            lines.Add($"- [Foundational concepts and reference material]({overflowUrl})");
         }
 
         // Add child directories as embedded sections with their offered content
