@@ -948,9 +948,10 @@ public class StructuralLlmsGenerator
                 lines.Add("");
             }
             var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
-            lines.Add("## Extended Index");
+            var topicCount = files.Count;
+            lines.Add("## More Topics");
             lines.Add("");
-            lines.Add($"- [Additional topics and reference material]({overflowUrl})");
+            lines.Add($"- [{topicCount} more topics]({overflowUrl})");
         }
 
         // Add child directories as embedded sections with their offered content
