@@ -21,6 +21,7 @@ public class StructuralLlmsGenerator
     private string? _cachedGitRoot;  // Cached git root to avoid repeated directory traversal
     private bool _gitRootSearched;   // Whether we've already searched for git root
     private IDeserializer? _yamlDeserializer;  // Cached YAML deserializer
+    private string? _customizationRoot;  // Root directory for customization path resolution
 
     public StructuralLlmsGenerator(int softBudget = 50, int hardBudget = 75, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/llmstxt")
     {
@@ -44,6 +45,7 @@ public class StructuralLlmsGenerator
         // Load customizations first
         _customizations = new CustomizationLoader(rootDir);
         _customizations.LoadAll();
+        _customizationRoot = rootDir;
         if (_customizations.Count > 0)
         {
             Console.WriteLine($"Found {_customizations.Count} _llms.json customization file(s)");
@@ -70,6 +72,17 @@ public class StructuralLlmsGenerator
         Console.WriteLine("Phase 2: Grouping files by physical location...");
         GroupFilesByDirectory(rootDir);
         Console.WriteLine($"Phase 2 complete: {_directorFiles.Count} directories with content\n");
+
+        // Reload customizations from effective root if content spans outside rootDir
+        // This ensures we pick up _llms.json files from directories reached via relative paths in toc.yml
+        var effectiveRootForCustomizations = FindCommonRoot(_directorFiles.Keys.ToHashSet(), rootDir);
+        if (effectiveRootForCustomizations != rootDir)
+        {
+            _customizations = new CustomizationLoader(effectiveRootForCustomizations);
+            _customizations.LoadAll();
+            _customizationRoot = effectiveRootForCustomizations;
+            Console.WriteLine($"Reloaded customizations from {Path.GetRelativePath(rootDir, effectiveRootForCustomizations)}: Found {_customizations.Count} _llms.json file(s)\n");
+        }
 
         // Phase 3: Generate llms.txt for each directory
         Console.WriteLine("Phase 3: Generating llms.txt files...\n");
@@ -601,11 +614,12 @@ public class StructuralLlmsGenerator
             return (null, 0);
         }
 
-        var relativeDir = Path.GetRelativePath(rootDir, dir);
-        var normalizedDir = relativeDir == "." ? "" : relativeDir.Replace('\\', '/');
+        // Use customizationRoot for path resolution (may differ from rootDir when content spans trees)
+        var customizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, dir);
+        var normalizedCustomizationPath = customizationPath == "." ? "" : customizationPath.Replace('\\', '/');
 
         // Check for customization
-        var customization = _customizations?.GetCustomization(normalizedDir);
+        var customization = _customizations?.GetCustomization(normalizedCustomizationPath);
 
         // Get title - prefer customization, then index.md frontmatter/H1, then toc.yml name, then dir name
         var dirName = Path.GetFileName(dir);
@@ -652,7 +666,7 @@ public class StructuralLlmsGenerator
         foreach (var file in filteredFiles)
         {
             var fileName = Path.GetFileNameWithoutExtension(file.RelativePath);
-            var nodeOverride = _customizations?.GetNodeOverride(normalizedDir, fileName);
+            var nodeOverride = _customizations?.GetNodeOverride(normalizedCustomizationPath, fileName);
             if (nodeOverride != null)
             {
                 if (!string.IsNullOrEmpty(nodeOverride.Rename))
@@ -691,7 +705,7 @@ public class StructuralLlmsGenerator
         if (customSections.Any())
         {
             // Use custom section definitions
-            sections = BuildCustomSections(customSections, filteredFiles, rootDir, normalizedDir);
+            sections = BuildCustomSections(customSections, filteredFiles, rootDir, normalizedCustomizationPath);
         }
         else
         {
@@ -896,6 +910,13 @@ public class StructuralLlmsGenerator
                 var childOffers = childCustomization?.Offers ?? new List<string>();
                 var wants = sectionDef.Wants ?? new List<string>();
 
+                // Calculate how many offers to include based on priority (100 = 100%, 50 = 50%, etc.)
+                // Always round up so that 50% of 1 offer still shows 1 offer
+                var offerCount = childOffers.Count;
+                var offersToInclude = priority > 0 && offerCount > 0
+                    ? (int)Math.Ceiling(offerCount * priority / 100.0)
+                    : 0;
+
                 // Resolve what files to include
                 var toInclude = new List<string>();
                 if (wants.Any())
@@ -903,14 +924,14 @@ public class StructuralLlmsGenerator
                     toInclude.AddRange(wants);
                     foreach (var offer in childOffers)
                     {
-                        if (toInclude.Count >= 6) break;
+                        if (toInclude.Count >= offersToInclude) break;
                         if (!toInclude.Contains(offer, StringComparer.OrdinalIgnoreCase))
                             toInclude.Add(offer);
                     }
                 }
-                else if (childOffers.Any())
+                else if (childOffers.Any() && offersToInclude > 0)
                 {
-                    toInclude.AddRange(childOffers.Take(6));
+                    toInclude.AddRange(childOffers.Take(offersToInclude));
                 }
 
                 // Find files from the global index matching this child path
@@ -920,14 +941,29 @@ public class StructuralLlmsGenerator
 
                 if (toInclude.Any())
                 {
-                    // Add specific files in order
+                    // Add specific files or subdirectory links in order
                     foreach (var include in toInclude)
                     {
-                        var match = childFiles.FirstOrDefault(f =>
-                            Path.GetFileNameWithoutExtension(f.RelativePath).Equals(include, StringComparison.OrdinalIgnoreCase));
-                        if (match != null)
+                        // First check if it's a subdirectory
+                        var subDirPath = $"{childDirPath}/{include}";
+                        var subDirFullPath = Path.Combine(rootDir, subDirPath);
+                        if (_directorFiles.ContainsKey(subDirFullPath) || Directory.Exists(subDirFullPath))
                         {
-                            links.Add((match.Title, GetGitHubUrl(match.FullPath, rootDir)));
+                            // It's a subdirectory - link to its llms.txt
+                            var subDirCustomization = _customizations?.GetCustomization(subDirPath);
+                            var subDirTitle = subDirCustomization?.Title ?? ConvertToTitleCase(include);
+                            var subDirLlmsUrl = GetGitHubUrl(Path.Combine(subDirFullPath, "llms.txt"), rootDir);
+                            links.Add((subDirTitle, subDirLlmsUrl));
+                        }
+                        else
+                        {
+                            // It's a file - find in the index
+                            var match = childFiles.FirstOrDefault(f =>
+                                Path.GetFileNameWithoutExtension(f.RelativePath).Equals(include, StringComparison.OrdinalIgnoreCase));
+                            if (match != null)
+                            {
+                                links.Add((match.Title, GetGitHubUrl(match.FullPath, rootDir)));
+                            }
                         }
                     }
                 }
@@ -1128,11 +1164,11 @@ public class StructuralLlmsGenerator
                 .ThenBy(c => c.Name)
                 .ToList();
 
-            foreach (var (childDir, childName, _) in orderedChildren)
+            foreach (var (childDir, childName, childPriority) in orderedChildren)
             {
-                // Get child's customization - use path relative to rootDir (same as CustomizationLoader uses)
-                var childRelPath = Path.GetRelativePath(rootDir, childDir).Replace('\\', '/');
-                var childCustomization = _customizations?.GetCustomization(childRelPath);
+                // Get child's customization - use path relative to customizationRoot
+                var childCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, childDir).Replace('\\', '/');
+                var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
 
                 var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                 var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
@@ -1149,21 +1185,32 @@ public class StructuralLlmsGenerator
                 var childOffers = childCustomization?.Offers ?? new List<string>();
                 var offersAdded = 0;
 
+                // Calculate how many offers to include based on priority (100 = 100%, 50 = 50%, etc.)
+                // Always round up so that 50% of 1 offer still shows 1 offer
+                var offerCount = childOffers.Count;
+                var maxOffersToInclude = childPriority > 0 && offerCount > 0
+                    ? (int)Math.Ceiling(offerCount * childPriority / 100.0)
+                    : offerCount; // If no priority set, include all offers
+
                 foreach (var offer in childOffers)
                 {
+                    // Check if we've reached the limit based on priority
+                    if (offersAdded >= maxOffersToInclude)
+                        break;
+
                     // Check if offer is a subdirectory (transitive offer)
                     var subDirPath = Path.Combine(childDir, offer);
                     if (_directorFiles.ContainsKey(subDirPath))
                     {
                         // It's a subdirectory - get its offers and embed them
-                        var subDirRelPath = Path.GetRelativePath(rootDir, subDirPath).Replace('\\', '/');
-                        var subDirCustomization = _customizations?.GetCustomization(subDirRelPath);
+                        var subDirCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, subDirPath).Replace('\\', '/');
+                        var subDirCustomization = _customizations?.GetCustomization(subDirCustomizationPath);
                         var subDirOffers = subDirCustomization?.Offers ?? new List<string>();
 
                         foreach (var subOffer in subDirOffers)
                         {
                             var subMatchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                                f.NormalizedPath.StartsWith(subDirRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
+                                f.NormalizedPath.StartsWith(subDirCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
                                 Path.GetFileNameWithoutExtension(f.RelativePath).Equals(subOffer, StringComparison.OrdinalIgnoreCase));
 
                             if (subMatchingFile != null)
@@ -1185,7 +1232,7 @@ public class StructuralLlmsGenerator
                     {
                         // It's a file - find in the global index
                         var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                            f.NormalizedPath.StartsWith(childRelPath + "/", StringComparison.OrdinalIgnoreCase) &&
+                            f.NormalizedPath.StartsWith(childCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
                             Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
 
                         if (matchingFile != null)
