@@ -17,10 +17,15 @@ var treeOption = new Option<bool>(
     aliases: new[] { "--tree", "-t" },
     description: "Show tree structure of all llms*.txt files (utility mode)");
 
-var maxLinesOption = new Option<int>(
-    aliases: new[] { "--max-lines" },
+var softBudgetOption = new Option<int>(
+    aliases: new[] { "--soft-budget" },
     getDefaultValue: () => 50,
-    description: "Maximum lines per file (default: 50)");
+    description: "Soft budget threshold for warnings (default: 50)");
+
+var hardBudgetOption = new Option<int>(
+    aliases: new[] { "--hard-budget" },
+    getDefaultValue: () => 75,
+    description: "Hard budget threshold that triggers overflow (default: 75)");
 
 var titleOption = new Option<string>(
     aliases: new[] { "--title" },
@@ -38,7 +43,8 @@ var rootCommand = new RootCommand("Generate llms.txt files based on physical fil
     dryRunOption,
     validateOption,
     treeOption,
-    maxLinesOption,
+    softBudgetOption,
+    hardBudgetOption,
     titleOption,
     summaryOption
 };
@@ -49,7 +55,8 @@ rootCommand.SetHandler(async (context) =>
     var validate = context.ParseResult.GetValueForOption(validateOption);
     var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
     var tree = context.ParseResult.GetValueForOption(treeOption);
-    var maxLines = context.ParseResult.GetValueForOption(maxLinesOption);
+    var softBudget = context.ParseResult.GetValueForOption(softBudgetOption);
+    var hardBudget = context.ParseResult.GetValueForOption(hardBudgetOption);
     var title = context.ParseResult.GetValueForOption(titleOption);
     var summary = context.ParseResult.GetValueForOption(summaryOption);
     
@@ -70,13 +77,13 @@ rootCommand.SetHandler(async (context) =>
     // Utility mode: Validate
     if (validate)
     {
-        var synthesizer = new LlmsSynthesizer(targetDir, maxLines);
+        var synthesizer = new LlmsSynthesizer(targetDir, hardBudget);
         var childFiles = synthesizer.DiscoverChildFiles();
         var allValid = true;
 
         foreach (var path in childFiles)
         {
-            var (isValid, issues) = Validator.ValidateFile(path, maxLines);
+            var (isValid, issues) = Validator.ValidateFile(path, hardBudget);
             if (!isValid)
             {
                 allValid = false;
@@ -100,7 +107,7 @@ rootCommand.SetHandler(async (context) =>
     }
 
     // Default mode: Structural generation (files appear where they physically exist)
-    var structuralGen = new StructuralLlmsGenerator(maxLines);
+    var structuralGen = new StructuralLlmsGenerator(softBudget, hardBudget);
     
     try
     {

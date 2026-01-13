@@ -1,0 +1,146 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/llms-customization.schema.json",
+  "title": "llms.txt Customization Schema",
+  "description": "Schema for _llms.json files that customize llms.txt generation",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to this schema"
+    },
+    "title": {
+      "type": "string",
+      "description": "Override the section/document title. Falls back to toc.yml name or .md frontmatter."
+    },
+    "description": {
+      "type": "string",
+      "description": "Override description text (rendered as blockquote). Falls back to .md frontmatter."
+    },
+    "guidance": {
+      "type": "object",
+      "description": "Structured guidance section for AI assistants",
+      "properties": {
+        "title": {
+          "type": "string",
+          "default": "Guidance for AI Assistants"
+        },
+        "intro": {
+          "type": "string",
+          "description": "Introductory text before the guidance items"
+        },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 10,
+          "description": "Bullet points of guidance (supports markdown)"
+        }
+      }
+    },
+    "offers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 6,
+      "description": "Ordered list of high-value child paths to offer to parent. First = most important."
+    },
+    "sections": {
+      "type": "array",
+      "description": "Define sections with explicit includes or child references",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Section name (use when creating a new grouping)"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to child (child's _llms.json provides title/description)"
+          },
+          "priority": {
+            "type": "integer",
+            "description": "Sort order - higher values appear first"
+          },
+          "wants": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Specific child nodes the parent wants included"
+          },
+          "include": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Explicit list of paths to include in this section"
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "description": "Per-node overrides keyed by relative path. Only specify to override source values.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "rename": {
+            "type": "string",
+            "description": "Override display name (falls back to toc.yml name or .md frontmatter title)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Override description (falls back to .md frontmatter description)"
+          }
+        }
+      }
+    },
+    "filter": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths to exclude from output"
+    },
+    "promote": {
+      "type": "array",
+      "description": "Nodes to promote up the hierarchy",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "levels": { 
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of levels to promote"
+          }
+        },
+        "required": ["path", "levels"]
+      }
+    },
+    "related": {
+      "type": "array",
+      "description": "Cross-references to related topics, rendered as 'Related Topics' section",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { 
+            "type": "string",
+            "description": "Path to related topic"
+          },
+          "weight": { 
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Relevance weight (0-1), used for ordering and budget decisions"
+          },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Keywords explaining the relationship"
+          },
+          "reason": { 
+            "type": "string",
+            "description": "Human-readable explanation of why this is related"
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  }
+}

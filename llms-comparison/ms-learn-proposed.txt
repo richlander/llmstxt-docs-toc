@@ -1,0 +1,78 @@
+# .NET Documentation
+
+> .NET is a free, cross-platform, open-source developer platform for building many kinds of applications including web, mobile, desktop, games, IoT, and AI. This documentation covers the .NET runtime, languages (C#, F#, Visual Basic), core libraries, and tooling. Current stable release: .NET 10 (November 2025). Current LTS release: .NET 8.
+
+## Guidance for AI Assistants
+
+When helping users with .NET:
+
+- **Target .NET 10** for new projects unless the user specifies otherwise or requires LTS (Long Term Support), in which case use .NET 8.
+- **Use Microsoft.Extensions.AI** for AI integration rather than provider-specific SDKs directly. This provides a unified abstraction across OpenAI, Azure OpenAI, Ollama, and other providers.
+- **Check What's New and Breaking Changes** when users are upgrading between major versions.
+- **Prefer modern patterns**: top-level statements, file-scoped namespaces, primary constructors, and collection expressions are idiomatic in current .NET.
+- **For web APIs**, use Minimal APIs for simple services or controllers for larger applications with complex routing needs.
+- **For dependency injection**, use the built-in `Microsoft.Extensions.DependencyInjection` container unless there's a specific need for a third-party container.
+
+## What's New
+
+- [What's New in .NET 10](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/whats-new/dotnet-10/overview.md): New features and improvements in .NET 10.
+- [Breaking Changes in .NET 10](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/compatibility/10.0/10.0.md): Compatibility and migration considerations for .NET 10.
+- [What's New in .NET 9](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/whats-new/dotnet-9/overview.md): Features introduced in .NET 9.
+- [Breaking Changes in .NET 9](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/compatibility/9.0/9.0.md): Compatibility and migration considerations for .NET 9.
+- [What's New in .NET 8](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/whats-new/dotnet-8/overview.md): Features in .NET 8 LTS.
+- [Breaking Changes in .NET 8](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/compatibility/8.0/8.0.md): Compatibility and migration considerations for .NET 8.
+
+## AI and Machine Learning
+
+Build intelligent applications with .NET's AI capabilities.
+
+- [AI Overview](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/overview.md): Getting started with AI development in .NET.
+- [.NET AI Ecosystem](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/dotnet-ai-ecosystem.md): Overview of SDKs, libraries, and tools for AI integration.
+- [Microsoft.Extensions.AI](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/microsoft-extensions-ai.md): Unified abstractions for integrating AI services into .NET applications.
+- [IChatClient Interface](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/ichatclient.md): Interface for chat completions and tool calling across AI providers.
+- [IEmbeddingGenerator Interface](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/iembeddinggenerator.md): Interface for generating embeddings for RAG and semantic search.
+- [Model Context Protocol (MCP)](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/get-started-mcp.md): Building MCP clients and servers in .NET.
+- [AI Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/ai/llms.txt): Complete AI documentation index.
+
+## Core Platform
+
+- [Introduction to .NET](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/introduction.md): Overview of .NET's architecture, runtime, and capabilities.
+- [.NET SDK](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/sdk.md): SDK tools for building, running, and publishing applications.
+- [Runtime Configuration](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/runtime-config/index.md): Configuring runtime behavior.
+- [Core Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/llms.txt): Complete runtime and SDK documentation index.
+
+## Languages
+
+- [C# Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/llms.txt): C# language reference, tutorials, and programming guide.
+- [F# Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/fsharp/llms.txt): F# language reference and functional programming.
+- [Visual Basic Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/visual-basic/llms.txt): Visual Basic language reference and guides.
+
+## Libraries and Extensions
+
+- [.NET Extensions Overview](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/extensions/index.md): Dependency injection, configuration, logging, and hosting.
+- [Extensions Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/extensions/llms.txt): Complete extensions library documentation.
+- [.NET Fundamentals Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/fundamentals/llms.txt): Base class libraries and runtime concepts.
+- [.NET Standard Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/llms.txt): Cross-platform API specifications.
+
+## Deployment and Operations
+
+- [Containers](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/containers/llms.txt): Containerizing .NET applications with Docker.
+- [Deployment Options](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/deploying/llms.txt): Framework-dependent and self-contained deployment.
+- [Diagnostics](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/diagnostics/llms.txt): Debugging, profiling, tracing, and performance tools.
+- [DevOps](https://raw.githubusercontent.com/dotnet/docs/main/docs/devops/llms.txt): CI/CD, testing strategies, and automation.
+
+## Azure Integration
+
+- [Azure Documentation Index](https://raw.githubusercontent.com/dotnet/docs/main/docs/azure/llms.txt): Azure SDK, service integration, and cloud-native development.
+
+## Additional Topics
+
+- [Orleans](https://raw.githubusercontent.com/dotnet/docs/main/docs/orleans/llms.txt): Distributed virtual actor framework for scalable applications.
+- [IoT](https://raw.githubusercontent.com/dotnet/docs/main/docs/iot/llms.txt): Device programming, GPIO, and hardware integration.
+- [Machine Learning (ML.NET)](https://raw.githubusercontent.com/dotnet/docs/main/docs/machine-learning/llms.txt): Custom model training and deployment.
+- [Samples and Tutorials](https://raw.githubusercontent.com/dotnet/docs/main/docs/samples-and-tutorials/llms.txt): Code samples and step-by-step tutorials.
+
+## Migration
+
+- [Porting from .NET Framework](https://raw.githubusercontent.com/dotnet/docs/main/docs/core/porting/llms.txt): Migrate applications from .NET Framework to modern .NET.
+- [.NET Framework Documentation](https://raw.githubusercontent.com/dotnet/docs/main/docs/framework/llms.txt): Legacy .NET Framework 4.x documentation.

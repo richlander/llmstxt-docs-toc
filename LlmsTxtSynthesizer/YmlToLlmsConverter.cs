@@ -13,7 +13,7 @@ public class YmlToLlmsConverter
     private readonly int _maxLinksPerFile;
     private readonly string _githubBaseUrl;
 
-    public YmlToLlmsConverter(int maxLines = 50, int maxLinksPerFile = 30, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/main")
+    public YmlToLlmsConverter(int maxLines = 50, int maxLinksPerFile = 30, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/llmstxt")
     {
         _maxLines = maxLines;
         _maxLinksPerFile = maxLinksPerFile;
