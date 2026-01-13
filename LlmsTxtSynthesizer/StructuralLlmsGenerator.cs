@@ -940,25 +940,10 @@ public class StructuralLlmsGenerator
             }
         }
 
-        // Add overflow file as its own section if it exists
-        if (overflowPath != null && dirName != null)
+        // Add child directories - separate those with offers from index-only
+        if (childDirs.Any() || overflowPath != null)
         {
-            if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
-            {
-                lines.Add("");
-            }
-            var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
-            var topicCount = files.Count;
-            lines.Add("## More Topics");
-            lines.Add("");
-            lines.Add($"- [{topicCount} more topics]({overflowUrl})");
-        }
-
-        // Add child directories as embedded sections with their offered content
-        if (childDirs.Any())
-        {
-            // Build priority map and skip list from section definitions
-            var priorityMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // Build skip list from section definitions (already rendered by BuildCustomSections)
             var coveredBySection = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (sectionDefs != null)
             {
@@ -966,39 +951,44 @@ public class StructuralLlmsGenerator
                 {
                     if (secDef.Path != null)
                     {
-                        // If this path has a section definition, it's already rendered by BuildCustomSections
                         coveredBySection.Add(secDef.Path);
-                        if (secDef.Priority.HasValue)
-                        {
-                            priorityMap[secDef.Path] = secDef.Priority.Value;
-                        }
                     }
                 }
             }
 
-            // Order children: by priority (higher first), then alphabetically
-            // Skip children that are already covered by custom sections
-            var orderedChildren = childDirs
-                .Select(childDir => {
-                    var childName = Path.GetFileName(childDir);
-                    var priority = priorityMap.TryGetValue(childName, out var p) ? p : 0;
-                    return (Dir: childDir, Name: childName, Priority: priority);
-                })
-                .Where(c => !coveredBySection.Contains(c.Name)) // Skip already-rendered children
-                .OrderByDescending(c => c.Priority)
-                .ThenBy(c => c.Name)
-                .ToList();
+            // Categorize children: those with offers vs index-only
+            var childrenWithOffers = new List<(string Dir, string Name, LlmsCustomization? Customization)>();
+            var indexOnlyChildren = new List<(string Dir, string Name, LlmsCustomization? Customization)>();
 
-            foreach (var (childDir, childName, childPriority) in orderedChildren)
+            foreach (var childDir in childDirs.OrderBy(d => d))
             {
-                // Get child's customization - use path relative to customizationRoot
+                var childName = Path.GetFileName(childDir);
+
+                // Skip children already covered by custom sections
+                if (coveredBySection.Contains(childName))
+                    continue;
+
                 var childCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, childDir).Replace('\\', '/');
                 var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
+                var childOffers = childCustomization?.Offers ?? new List<string>();
 
+                if (childOffers.Any())
+                {
+                    childrenWithOffers.Add((childDir, childName, childCustomization));
+                }
+                else
+                {
+                    indexOnlyChildren.Add((childDir, childName, childCustomization));
+                }
+            }
+
+            // Render children WITH offers as full sections
+            foreach (var (childDir, childName, childCustomization) in childrenWithOffers)
+            {
+                var childCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, childDir).Replace('\\', '/');
                 var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                 var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
 
-                // Add section header for this child
                 if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
                 {
                     lines.Add("");
@@ -1006,28 +996,13 @@ public class StructuralLlmsGenerator
                 lines.Add($"## {displayName}");
                 lines.Add("");
 
-                // Get child's offers and embed them (supports transitive offers from subdirectories)
                 var childOffers = childCustomization?.Offers ?? new List<string>();
-                var offersAdded = 0;
-
-                // Calculate how many offers to include based on priority (100 = 100%, 50 = 50%, etc.)
-                // Always round up so that 50% of 1 offer still shows 1 offer
-                var offerCount = childOffers.Count;
-                var maxOffersToInclude = childPriority > 0 && offerCount > 0
-                    ? (int)Math.Ceiling(offerCount * childPriority / 100.0)
-                    : offerCount; // If no priority set, include all offers
-
                 foreach (var offer in childOffers)
                 {
-                    // Check if we've reached the limit based on priority
-                    if (offersAdded >= maxOffersToInclude)
-                        break;
-
                     // Check if offer is a subdirectory (transitive offer)
                     var subDirPath = Path.Combine(childDir, offer);
                     if (_directorFiles.ContainsKey(subDirPath))
                     {
-                        // It's a subdirectory - get its offers and embed them
                         var subDirCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, subDirPath).Replace('\\', '/');
                         var subDirCustomization = _customizations?.GetCustomization(subDirCustomizationPath);
                         var subDirOffers = subDirCustomization?.Offers ?? new List<string>();
@@ -1049,13 +1024,11 @@ public class StructuralLlmsGenerator
                                 {
                                     lines.Add($"- [{subMatchingFile.Title}]({fileUrl})");
                                 }
-                                offersAdded++;
                             }
                         }
                     }
                     else
                     {
-                        // It's a file - find in the global index
                         var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
                             f.NormalizedPath.StartsWith(childCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
                             Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
@@ -1071,30 +1044,37 @@ public class StructuralLlmsGenerator
                             {
                                 lines.Add($"- [{matchingFile.Title}]({fileUrl})");
                             }
-                            offersAdded++;
                         }
                     }
                 }
 
-                // Always add link to full index
+                lines.Add($"- [More in {displayName}...]({llmsTxtUrl})");
+            }
+
+            // Render "Topic Indices" section with extended file + index-only children
+            if (overflowPath != null || indexOnlyChildren.Any())
+            {
+                if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
                 {
-                    if (offersAdded > 0)
-                    {
-                        lines.Add($"- [More in {displayName}...]({llmsTxtUrl})");
-                    }
-                    else
-                    {
-                        // No offers - just link to the full index with description if available
-                        var childDesc = childCustomization?.Description;
-                        if (!string.IsNullOrEmpty(childDesc))
-                        {
-                            lines.Add($"- [{displayName} Index]({llmsTxtUrl}): {childDesc}");
-                        }
-                        else
-                        {
-                            lines.Add($"- [{displayName} Index]({llmsTxtUrl})");
-                        }
-                    }
+                    lines.Add("");
+                }
+                lines.Add("## Topic Indices");
+                lines.Add("");
+
+                // Extended file link first
+                if (overflowPath != null)
+                {
+                    var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
+                    var topicCount = files.Count;
+                    lines.Add($"- [{topicCount} more topics in {title}]({overflowUrl})");
+                }
+
+                // Then all index-only children
+                foreach (var (childDir, childName, childCustomization) in indexOnlyChildren)
+                {
+                    var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
+                    var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
+                    lines.Add($"- [{displayName}]({llmsTxtUrl})");
                 }
             }
         }
