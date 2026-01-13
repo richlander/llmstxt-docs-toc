@@ -940,7 +940,9 @@ public class StructuralLlmsGenerator
             }
         }
 
-        // Add child directories - separate those with offers from index-only
+        // Add child directories to Topic Indices
+        // (Custom sections from _llms.json already pulled in prioritized content via BuildCustomSections)
+        // Offers alone don't trigger embedding - only explicit sections queries do
         if (childDirs.Any() || overflowPath != null)
         {
             // Build skip list from section definitions (already rendered by BuildCustomSections)
@@ -951,14 +953,22 @@ public class StructuralLlmsGenerator
                 {
                     if (secDef.Path != null)
                     {
+                        // Mark both the exact path and parent directories as covered
                         coveredBySection.Add(secDef.Path);
+                        // If section points to a subdirectory, mark the parent too
+                        var parentPath = secDef.Path.Contains('/')
+                            ? secDef.Path.Substring(0, secDef.Path.IndexOf('/'))
+                            : null;
+                        if (parentPath != null)
+                        {
+                            coveredBySection.Add(parentPath);
+                        }
                     }
                 }
             }
 
-            // Categorize children: those with offers vs index-only
-            var childrenWithOffers = new List<(string Dir, string Name, LlmsCustomization? Customization)>();
-            var indexOnlyChildren = new List<(string Dir, string Name, LlmsCustomization? Customization)>();
+            // Collect children not covered by sections
+            var indexChildren = new List<(string Dir, string Name, LlmsCustomization? Customization)>();
 
             foreach (var childDir in childDirs.OrderBy(d => d))
             {
@@ -970,89 +980,11 @@ public class StructuralLlmsGenerator
 
                 var childCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, childDir).Replace('\\', '/');
                 var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
-                var childOffers = childCustomization?.Offers ?? new List<string>();
-
-                if (childOffers.Any())
-                {
-                    childrenWithOffers.Add((childDir, childName, childCustomization));
-                }
-                else
-                {
-                    indexOnlyChildren.Add((childDir, childName, childCustomization));
-                }
+                indexChildren.Add((childDir, childName, childCustomization));
             }
 
-            // Render children WITH offers as full sections
-            foreach (var (childDir, childName, childCustomization) in childrenWithOffers)
-            {
-                var childCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, childDir).Replace('\\', '/');
-                var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
-                var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
-
-                if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
-                {
-                    lines.Add("");
-                }
-                lines.Add($"## {displayName}");
-                lines.Add("");
-
-                var childOffers = childCustomization?.Offers ?? new List<string>();
-                foreach (var offer in childOffers)
-                {
-                    // Check if offer is a subdirectory (transitive offer)
-                    var subDirPath = Path.Combine(childDir, offer);
-                    if (_directorFiles.ContainsKey(subDirPath))
-                    {
-                        var subDirCustomizationPath = Path.GetRelativePath(_customizationRoot ?? rootDir, subDirPath).Replace('\\', '/');
-                        var subDirCustomization = _customizations?.GetCustomization(subDirCustomizationPath);
-                        var subDirOffers = subDirCustomization?.Offers ?? new List<string>();
-
-                        foreach (var subOffer in subDirOffers)
-                        {
-                            var subMatchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                                f.NormalizedPath.StartsWith(subDirCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
-                                Path.GetFileNameWithoutExtension(f.RelativePath).Equals(subOffer, StringComparison.OrdinalIgnoreCase));
-
-                            if (subMatchingFile != null)
-                            {
-                                var fileUrl = GetGitHubUrl(subMatchingFile.FullPath, rootDir);
-                                if (!string.IsNullOrEmpty(subMatchingFile.Description))
-                                {
-                                    lines.Add($"- [{subMatchingFile.Title}]({fileUrl}): {subMatchingFile.Description}");
-                                }
-                                else
-                                {
-                                    lines.Add($"- [{subMatchingFile.Title}]({fileUrl})");
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                            f.NormalizedPath.StartsWith(childCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
-                            Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
-
-                        if (matchingFile != null)
-                        {
-                            var fileUrl = GetGitHubUrl(matchingFile.FullPath, rootDir);
-                            if (!string.IsNullOrEmpty(matchingFile.Description))
-                            {
-                                lines.Add($"- [{matchingFile.Title}]({fileUrl}): {matchingFile.Description}");
-                            }
-                            else
-                            {
-                                lines.Add($"- [{matchingFile.Title}]({fileUrl})");
-                            }
-                        }
-                    }
-                }
-
-                lines.Add($"- [More in {displayName}...]({llmsTxtUrl})");
-            }
-
-            // Render "Topic Indices" section with extended file + index-only children
-            if (overflowPath != null || indexOnlyChildren.Any())
+            // Render "Topic Indices" section with extended file + all remaining children
+            if (overflowPath != null || indexChildren.Any())
             {
                 if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
                 {
@@ -1069,8 +1001,8 @@ public class StructuralLlmsGenerator
                     lines.Add($"- [{topicCount} more topics in {title}]({overflowUrl})");
                 }
 
-                // Then all index-only children
-                foreach (var (childDir, childName, childCustomization) in indexOnlyChildren)
+                // Then all remaining children as index links
+                foreach (var (childDir, childName, childCustomization) in indexChildren)
                 {
                     var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                     var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
