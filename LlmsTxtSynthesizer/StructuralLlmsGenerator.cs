@@ -990,7 +990,9 @@ public class StructuralLlmsGenerator
                 {
                     lines.Add("");
                 }
-                lines.Add("## Topic Indices");
+                // Use "Other Topic Indices" if there are prioritized sections above, otherwise just "Topic Indices"
+                var hasOfferSections = sections.Any();
+                lines.Add(hasOfferSections ? "## Other Topic Indices" : "## Topic Indices");
                 lines.Add("");
 
                 // Extended file link first
