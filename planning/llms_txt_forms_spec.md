@@ -193,24 +193,30 @@ Only included when new features are documented for the current release.
 
 Index links should be the **first link** in their respective lists and follow this format:
 
+`[title](url): N topics[, M in tree][; description]`
+
+- **N topics**: Number of topics directly in the linked file
+- **M in tree**: Total topics reachable recursively (only when significantly larger than N)
+- **description**: Short contextual description (optional, separated by semicolon)
+
 **Prioritized section index (first in section's link list):**
 ```markdown
-- [Topic Index](topic/llms.txt): Complete index with N topics
+- [C# Language Index](csharp/llms.txt): 45 topics, 1139 in tree
 ```
+No description needed—section header and description paragraph provide context.
 
 **Extended index (first in Topic Indices section):**
 ```markdown
-- [Parent Title Extended Index](llms-extended.txt): Extended index with N additional topics
+- [.NET Standard Library Extended Index](llms-extended.txt): 20 additional topics
 ```
+No tree count (flat overflow file), no description needed.
 
 **Child directory index (in Topic Indices section):**
 ```markdown
-- [Child Title](child/llms.txt): Short description for context
+- [Azure for .NET](azure/llms.txt): 12 topics, 87 in tree; Azure SDK, authentication, and cloud integration.
+- [Serialization](serialization/llms.txt): 8 topics; Convert objects to JSON, XML, or binary formats.
 ```
-Or without description:
-```markdown
-- [Child Title](child/llms.txt)
-```
+Metrics first, then semicolon, then short description.
 
 ---
 

@@ -18,6 +18,7 @@ public class StructuralLlmsGenerator
     private string? _cachedGitRoot;  // Cached git root to avoid repeated directory traversal
     private bool _gitRootSearched;   // Whether we've already searched for git root
     private string? _customizationRoot;  // Root directory for customization path resolution
+    private readonly Dictionary<string, (int FileTopics, int TreeTopics)> _topicCounts = new();  // Topic counts per directory
 
     public StructuralLlmsGenerator(int softBudget = 50, int hardBudget = 75, string githubBaseUrl = "https://raw.githubusercontent.com/dotnet/docs/refs/heads/llmstxt")
     {
@@ -59,6 +60,9 @@ public class StructuralLlmsGenerator
         Console.WriteLine("Phase 2: Grouping files by physical location...");
         GroupFilesByDirectory(rootDir);
         Console.WriteLine($"Phase 2 complete: {_directorFiles.Count} directories with content\n");
+
+        // Compute topic counts per directory (file topics + tree totals)
+        ComputeTopicCounts(rootDir);
 
         // Phase 3: Generate llms.txt for each directory
         Console.WriteLine("Phase 3: Generating llms.txt files...\n");
@@ -328,16 +332,18 @@ public class StructuralLlmsGenerator
             var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
 
             var childTitle = childCustomization?.Title ?? ConvertToTitleCase(childName);
+            var (fileTopics, treeTopics) = GetTopicCounts(childDir);
+            var metrics = FormatTopicMetrics(fileTopics, treeTopics);
             var shortDesc = childCustomization?.ShortDescription;
             var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
 
             if (!string.IsNullOrEmpty(shortDesc))
             {
-                lines.Add($"- [{childTitle}]({llmsTxtUrl}): {shortDesc}");
+                lines.Add($"- [{childTitle}]({llmsTxtUrl}): {metrics}; {shortDesc}");
             }
             else
             {
-                lines.Add($"- [{childTitle}]({llmsTxtUrl})");
+                lines.Add($"- [{childTitle}]({llmsTxtUrl}): {metrics}");
             }
         }
 
@@ -379,6 +385,68 @@ public class StructuralLlmsGenerator
 
             _directorFiles[dir].Add(metadata);
         }
+    }
+
+    /// <summary>
+    /// Compute topic counts for each directory (file topics + tree totals).
+    /// </summary>
+    private void ComputeTopicCounts(string rootDir)
+    {
+        // Get all directories that will have llms.txt files
+        var allDirs = _directorFiles.Keys.ToHashSet();
+        
+        // Also include intermediate directories (directories with children that have llms.txt)
+        foreach (var dir in _directorFiles.Keys.ToList())
+        {
+            var current = Path.GetDirectoryName(dir);
+            while (current != null && current.Length >= rootDir.Length)
+            {
+                allDirs.Add(current);
+                current = Path.GetDirectoryName(current);
+            }
+        }
+
+        // Process directories bottom-up (deepest first) to compute tree totals
+        foreach (var dir in allDirs.OrderByDescending(d => d.Length))
+        {
+            // File topics = direct markdown files in this directory
+            var fileTopics = _directorFiles.TryGetValue(dir, out var files) ? files.Count : 0;
+            
+            // Tree topics = file topics + sum of tree topics from immediate child directories
+            var treeTopics = fileTopics;
+            
+            foreach (var childDir in allDirs.Where(d => 
+                Path.GetDirectoryName(d) == dir && d != dir))
+            {
+                if (_topicCounts.TryGetValue(childDir, out var childCounts))
+                {
+                    treeTopics += childCounts.TreeTopics;
+                }
+            }
+            
+            _topicCounts[dir] = (fileTopics, treeTopics);
+        }
+    }
+
+    /// <summary>
+    /// Get topic counts for a directory. Returns (fileTopics, treeTopics).
+    /// </summary>
+    private (int FileTopics, int TreeTopics) GetTopicCounts(string dir)
+    {
+        return _topicCounts.TryGetValue(dir, out var counts) ? counts : (0, 0);
+    }
+
+    /// <summary>
+    /// Format topic metrics for display: "N topics[, M in tree]"
+    /// Only shows tree count if significantly larger than file count.
+    /// </summary>
+    private static string FormatTopicMetrics(int fileTopics, int treeTopics)
+    {
+        if (treeTopics > fileTopics * 1.5 && treeTopics > fileTopics + 5)
+        {
+            return $"{fileTopics} topics, {treeTopics} in tree";
+        }
+        return $"{fileTopics} topics";
     }
 
     private static bool IsInIncludesDirectory(string path)
@@ -806,9 +874,11 @@ public class StructuralLlmsGenerator
 
                 // Always add link to the child's llms.txt as the index - FIRST in the list
                 var childLlmsFullPath = Path.Combine(rootDir, childDirPath, "llms.txt");
+                var childFullPath = Path.Combine(rootDir, childDirPath);
                 var llmsUrl = GetGitHubUrl(childLlmsFullPath, rootDir);
                 var indexTitle = $"{sectionTitle} Index";
-                var indexDescription = $"Complete index with {childFiles.Count} topics";
+                var (fileTopics, treeTopics) = GetTopicCounts(childFullPath);
+                var indexDescription = FormatTopicMetrics(fileTopics, treeTopics);
                 links.Insert(0, (indexTitle, llmsUrl, indexDescription));
 
                 var section = new Section
@@ -1004,22 +1074,25 @@ public class StructuralLlmsGenerator
                 {
                     var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
                     var topicCount = files.Count;
-                    lines.Add($"- [{title} Extended Index]({overflowUrl}): Extended index with {topicCount} additional topics");
+                    lines.Add($"- [{title} Extended Index]({overflowUrl}): {topicCount} additional topics");
                 }
 
-                // Then all remaining children as index links (with shortDescription if available)
+                // Then all remaining children as index links (metrics + optional description)
                 foreach (var (childDir, childName, childCustomization) in indexChildren)
                 {
                     var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                     var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
+                    var (fileTopics, treeTopics) = GetTopicCounts(childDir);
+                    var metrics = FormatTopicMetrics(fileTopics, treeTopics);
                     var shortDesc = childCustomization?.ShortDescription;
+                    
                     if (!string.IsNullOrEmpty(shortDesc))
                     {
-                        lines.Add($"- [{displayName}]({llmsTxtUrl}): {shortDesc}");
+                        lines.Add($"- [{displayName}]({llmsTxtUrl}): {metrics}; {shortDesc}");
                     }
                     else
                     {
-                        lines.Add($"- [{displayName}]({llmsTxtUrl})");
+                        lines.Add($"- [{displayName}]({llmsTxtUrl}): {metrics}");
                     }
                 }
             }
