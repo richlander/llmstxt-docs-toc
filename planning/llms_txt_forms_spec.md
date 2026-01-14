@@ -220,6 +220,14 @@ Metrics first, then semicolon, then short description.
 
 ---
 
+## Policy Considerations
+
+### Prioritized Sections vs Topic Indices
+
+Directories that appear as prioritized sections (Form 3) are **not repeated** in the Topic Indices section. This avoids redundancy since the prioritized section already surfaces the topic prominently with curated links. Topic Indices contains "the rest"—topics that weren't promoted to their own section.
+
+---
+
 ## Section Naming Conventions
 
 | Scenario | Section Name |
