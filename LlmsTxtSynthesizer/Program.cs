@@ -27,6 +27,10 @@ var hardBudgetOption = new Option<int>(
     getDefaultValue: () => 75,
     description: "Hard budget threshold that triggers overflow (default: 75)");
 
+var copyRootOption = new Option<string?>(
+    aliases: new[] { "--copy-root" },
+    description: "Copy the root llms.txt to this directory with adjusted paths (e.g., repo root)");
+
 var titleOption = new Option<string>(
     aliases: new[] { "--title" },
     getDefaultValue: () => ".NET Documentation",
@@ -45,6 +49,7 @@ var rootCommand = new RootCommand("Generate llms.txt files based on physical fil
     treeOption,
     softBudgetOption,
     hardBudgetOption,
+    copyRootOption,
     titleOption,
     summaryOption
 };
@@ -57,6 +62,7 @@ rootCommand.SetHandler(async (context) =>
     var tree = context.ParseResult.GetValueForOption(treeOption);
     var softBudget = context.ParseResult.GetValueForOption(softBudgetOption);
     var hardBudget = context.ParseResult.GetValueForOption(hardBudgetOption);
+    var copyRoot = context.ParseResult.GetValueForOption(copyRootOption);
     var title = context.ParseResult.GetValueForOption(titleOption);
     var summary = context.ParseResult.GetValueForOption(summaryOption);
     
@@ -112,6 +118,13 @@ rootCommand.SetHandler(async (context) =>
     try
     {
         var count = structuralGen.GenerateAll(targetDir, dryRun);
+        
+        // Copy root llms.txt to another location with adjusted paths
+        if (!string.IsNullOrEmpty(copyRoot) && !dryRun)
+        {
+            CopyRootLlmsTxt(targetDir, copyRoot);
+        }
+        
         context.ExitCode = 0;
     }
     catch (Exception ex)
@@ -124,6 +137,22 @@ rootCommand.SetHandler(async (context) =>
 });
 
 return await rootCommand.InvokeAsync(args);
+
+static void CopyRootLlmsTxt(string sourceDir, string copyRoot)
+{
+    var sourcePath = Path.Combine(sourceDir, "llms.txt");
+    if (!File.Exists(sourcePath))
+    {
+        Console.WriteLine($"Warning: No llms.txt found at {sourcePath} to project");
+        return;
+    }
+    
+    // Since links are absolute GitHub URLs, just copy the file
+    var content = File.ReadAllText(sourcePath);
+    var destPath = Path.Combine(copyRoot, "llms.txt");
+    File.WriteAllText(destPath, content);
+    Console.WriteLine($"\nCopyed root llms.txt to {destPath}");
+}
 
 static void ShowTree(string targetDir)
 {
