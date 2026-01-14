@@ -114,6 +114,12 @@ public class SectionDefinition
     public int? Priority { get; set; }
 
     /// <summary>
+    /// Description for this section (shown after section header).
+    /// </summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>
     /// Specific child nodes the parent wants included.
     /// </summary>
     [JsonPropertyName("wants")]

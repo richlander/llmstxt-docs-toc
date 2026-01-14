@@ -151,6 +151,7 @@ public class StructuralLlmsGenerator
         foreach (var mdFile in mdFiles)
         {
             var relativePath = Path.GetRelativePath(rootDir, mdFile);
+            var fileName = Path.GetFileName(mdFile);
 
             // Skip files in common non-documentation directories
             if (relativePath.Contains("node_modules") ||
@@ -161,8 +162,14 @@ public class StructuralLlmsGenerator
                 continue;
             }
 
+            // Skip AGENTS.md files (Copilot agent instructions, not documentation)
+            if (fileName.Equals("AGENTS.md", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var (title, description) = ExtractMarkdownMetadata(mdFile);
-            var fileName = Path.GetFileNameWithoutExtension(mdFile);
+            fileName = Path.GetFileNameWithoutExtension(mdFile);
 
             _fileIndex[relativePath] = new FileMetadata
             {
@@ -778,7 +785,8 @@ public class StructuralLlmsGenerator
                             var subDirCustomization = _customizations?.GetCustomization(subDirPath);
                             var subDirTitle = subDirCustomization?.Title ?? ConvertToTitleCase(include);
                             var subDirLlmsUrl = GetGitHubUrl(Path.Combine(subDirFullPath, "llms.txt"), rootDir);
-                            links.Add((subDirTitle, subDirLlmsUrl, null));
+                            var subDirShortDesc = subDirCustomization?.ShortDescription;
+                            links.Add((subDirTitle, subDirLlmsUrl, subDirShortDesc));
                         }
                         else
                         {
@@ -829,13 +837,15 @@ public class StructuralLlmsGenerator
                         var dirFullPath = Path.Combine(rootDir, includePath, "llms.txt");
                         var dirCustomization = _customizations?.GetCustomization(includePath);
                         var dirTitle = dirCustomization?.Title ?? ConvertToTitleCase(Path.GetFileName(includePath));
-                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir), null));
+                        var dirShortDesc = dirCustomization?.ShortDescription;
+                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir), dirShortDesc));
                     }
                 }
 
                 var section = new Section
                 {
                     Name = sectionDef.Name,
+                    Description = sectionDef.Description,
                     Links = links
                 };
 
