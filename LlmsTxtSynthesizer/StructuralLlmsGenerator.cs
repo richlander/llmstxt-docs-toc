@@ -534,28 +534,42 @@ public class StructuralLlmsGenerator
         // Check for custom sections from customization
         var customSections = customization?.Sections ?? new List<SectionDefinition>();
         List<Section> sections;
+        Section? localFilesSection = null;
 
         if (customSections.Any())
         {
             // Use custom section definitions (for child directories)
             sections = BuildCustomSections(customSections, filteredFiles, rootDir, normalizedCustomizationPath);
+
+            // Local files go in "Other Topics" section (after prioritized sections)
+            if (filteredFiles.Any())
+            {
+                localFilesSection = new Section
+                {
+                    Name = "Other Topics",
+                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
+                };
+            }
         }
         else
         {
             sections = new List<Section>();
+
+            // No prioritized sections - local files are the main content (ungrouped)
+            if (filteredFiles.Any())
+            {
+                localFilesSection = new Section
+                {
+                    Name = null,
+                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
+                };
+            }
         }
 
-        // Always include local files as an ungrouped section (even when custom sections exist)
-        // Custom sections are for organizing child directories - local files are separate
-        if (filteredFiles.Any())
+        // Add local files section after custom sections
+        if (localFilesSection != null)
         {
-            var localSection = new Section
-            {
-                Name = null,
-                Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
-            };
-            // Insert local files at the beginning
-            sections.Insert(0, localSection);
+            sections.Add(localFilesSection);
         }
 
         // Check if this directory has child directories with llms.txt
@@ -581,32 +595,33 @@ public class StructuralLlmsGenerator
         var needsOverflow = estimatedLines > _hardBudget && filteredFiles.Count > 1 && childDirs.Any();
         string? overflowPath = null;
 
-        if (needsOverflow)
+        if (needsOverflow && localFilesSection != null)
         {
-            // Generate extended index file with additional content (not custom sections)
+            // Generate extended index file with local files
             // Custom sections (prioritized child content) stay in main file
-            var additionalSection = sections.FirstOrDefault(s => s.Name == null);
-            if (additionalSection != null)
+            var overflowFileName = "llms-extended.txt";
+            overflowPath = Path.Combine(dir, overflowFileName);
+            var overflowTitle = $"{title} -- Extended Index";
+
+            // Use ungrouped section in extended file (no "Other Topics" header there)
+            var overflowSection = new Section
             {
-                var overflowFileName = "llms-extended.txt";
-                overflowPath = Path.Combine(dir, overflowFileName);
-                var overflowTitle = $"{title} -- Extended Index";
+                Name = null,
+                Links = localFilesSection.Links
+            };
+            var overflowSections = new List<Section> { overflowSection };
+            var overflowContent = GenerateOverflowContent(overflowTitle, description, overflowSections, rootDir, _hardBudget * 2);
+            var overflowLineCount = overflowContent.Split('\n').Length;
 
-                var overflowSections = new List<Section> { additionalSection };
-                var overflowContent = GenerateOverflowContent(overflowTitle, description, overflowSections, rootDir, _hardBudget * 2);
-                var overflowLineCount = overflowContent.Split('\n').Length;
-
-                if (!dryRun)
-                {
-                    File.WriteAllText(overflowPath, overflowContent);
-                }
-
-                Console.WriteLine($"    → Extended: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} additional topics)");
-
-                // Remove additional content from main sections - it's now in extended index
-                // Keep custom sections (prioritized content) in main file
-                sections = sections.Where(s => s.Name != null).ToList();
+            if (!dryRun)
+            {
+                File.WriteAllText(overflowPath, overflowContent);
             }
+
+            Console.WriteLine($"    → Extended: {overflowFileName} ({overflowLineCount} lines, {filteredFiles.Count} additional topics)");
+
+            // Remove local files section from main - it's now in extended index
+            sections.Remove(localFilesSection);
         }
 
         // Generate main llms.txt (with or without local content depending on overflow)
@@ -982,9 +997,9 @@ public class StructuralLlmsGenerator
                 {
                     lines.Add("");
                 }
-                // Use "Other Topic Indices" if there are prioritized sections above, otherwise just "Topic Indices"
-                var hasOfferSections = sections.Any();
-                lines.Add(hasOfferSections ? "## Other Topic Indices" : "## Topic Indices");
+                // Use "Other Topic Indices" if there are prioritized sections, otherwise just "Topic Indices"
+                var hasPrioritizedSections = sectionDefs?.Any() == true;
+                lines.Add(hasPrioritizedSections ? "## Other Topic Indices" : "## Topic Indices");
                 lines.Add("");
 
                 // Extended file link first
