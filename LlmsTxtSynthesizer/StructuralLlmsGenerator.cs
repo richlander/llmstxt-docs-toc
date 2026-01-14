@@ -791,7 +791,10 @@ public class StructuralLlmsGenerator
                         else
                         {
                             // It's a file - find in the index
+                            // Match by relative path within the child directory (e.g., "whats-new/csharp-14" matches "csharp/whats-new/csharp-14.md")
+                            var expectedPath = $"{childDirPath}/{include}".Replace('\\', '/');
                             var match = childFiles.FirstOrDefault(f =>
+                                f.NormalizedPath.Equals(expectedPath + ".md", StringComparison.OrdinalIgnoreCase) ||
                                 Path.GetFileNameWithoutExtension(f.RelativePath).Equals(include, StringComparison.OrdinalIgnoreCase));
                             if (match != null)
                             {
