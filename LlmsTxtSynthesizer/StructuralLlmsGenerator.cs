@@ -310,7 +310,10 @@ public class StructuralLlmsGenerator
             lines.Add("");
         }
 
-        // Add each child directory as a section
+        // Add all child directories under a single Topic Indices section
+        lines.Add("## Topic Indices");
+        lines.Add("");
+
         foreach (var childDir in childDirs.OrderBy(d => d))
         {
             var childName = Path.GetFileName(childDir);
@@ -318,51 +321,17 @@ public class StructuralLlmsGenerator
             var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
 
             var childTitle = childCustomization?.Title ?? ConvertToTitleCase(childName);
-            var childDesc = childCustomization?.Description;
+            var shortDesc = childCustomization?.ShortDescription;
             var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
 
-            lines.Add($"## {childTitle}");
-            lines.Add("");
-
-            if (!string.IsNullOrEmpty(childDesc))
+            if (!string.IsNullOrEmpty(shortDesc))
             {
-                lines.Add(childDesc);
-                lines.Add("");
-            }
-
-            // Get child's offers and embed them
-            var childOffers = childCustomization?.Offers ?? new List<string>();
-            foreach (var offer in childOffers.Take(4)) // Limit offers for navigation files
-            {
-                var matchingFile = _fileIndex.Values.FirstOrDefault(f =>
-                    f.NormalizedPath.StartsWith(childCustomizationPath + "/", StringComparison.OrdinalIgnoreCase) &&
-                    Path.GetFileNameWithoutExtension(f.RelativePath).Equals(offer, StringComparison.OrdinalIgnoreCase));
-
-                if (matchingFile != null)
-                {
-                    var fileUrl = GetGitHubUrl(matchingFile.FullPath, rootDir);
-                    if (!string.IsNullOrEmpty(matchingFile.Description))
-                    {
-                        lines.Add($"- [{matchingFile.Title}]({fileUrl}): {matchingFile.Description}");
-                    }
-                    else
-                    {
-                        lines.Add($"- [{matchingFile.Title}]({fileUrl})");
-                    }
-                }
-            }
-
-            // Add link to full index
-            if (childOffers.Any())
-            {
-                lines.Add($"- [More in {childTitle}...]({llmsTxtUrl})");
+                lines.Add($"- [{childTitle}]({llmsTxtUrl}): {shortDesc}");
             }
             else
             {
-                lines.Add($"- [{childTitle} Documentation Index]({llmsTxtUrl})");
+                lines.Add($"- [{childTitle}]({llmsTxtUrl})");
             }
-
-            lines.Add("");
         }
 
         var content = string.Join("\n", lines).TrimEnd() + "\n";
@@ -383,6 +352,12 @@ public class StructuralLlmsGenerator
         {
             var dir = Path.GetDirectoryName(metadata.FullPath)!;
 
+            // Skip "includes" directories - these contain file fragments for the build system
+            if (IsInIncludesDirectory(dir))
+            {
+                continue;
+            }
+
             // Check if this file should be promoted
             var promotedDir = GetPromotedDirectory(metadata.RelativePath, rootDir);
             if (promotedDir != null)
@@ -397,6 +372,13 @@ public class StructuralLlmsGenerator
 
             _directorFiles[dir].Add(metadata);
         }
+    }
+
+    private static bool IsInIncludesDirectory(string path)
+    {
+        // Check if any segment of the path is "includes"
+        var segments = path.Replace('\\', '/').Split('/');
+        return segments.Any(s => s.Equals("includes", StringComparison.OrdinalIgnoreCase));
     }
 
     private string? GetPromotedDirectory(string relativePath, string rootDir)
@@ -547,7 +529,7 @@ public class StructuralLlmsGenerator
                 localFilesSection = new Section
                 {
                     Name = "Other Topics",
-                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
+                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir), (string?)null)).ToList()
                 };
             }
         }
@@ -561,7 +543,7 @@ public class StructuralLlmsGenerator
                 localFilesSection = new Section
                 {
                     Name = null,
-                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir))).ToList()
+                    Links = filteredFiles.Select(f => (f.Title, GetGitHubUrl(f.FullPath, rootDir), (string?)null)).ToList()
                 };
             }
         }
@@ -698,16 +680,17 @@ public class StructuralLlmsGenerator
                 lines.Add("");
             }
 
-            foreach (var (linkTitle, linkUrl) in section.Links)
+            foreach (var (linkTitle, linkUrl, linkDescription) in section.Links)
             {
                 if (lines.Count + 1 >= maxLines)
                     break;
 
-                var fileDesc = GetFileByUrl(linkUrl)?.Description;
+                // Use explicit link description if provided, otherwise fall back to file description
+                var desc = linkDescription ?? GetFileByUrl(linkUrl)?.Description;
 
-                if (!string.IsNullOrEmpty(fileDesc))
+                if (!string.IsNullOrEmpty(desc))
                 {
-                    lines.Add($"- [{linkTitle}]({linkUrl}): {fileDesc}");
+                    lines.Add($"- [{linkTitle}]({linkUrl}): {desc}");
                 }
                 else
                 {
@@ -732,7 +715,7 @@ public class StructuralLlmsGenerator
         foreach (var sectionDef in customSections)
         {
             var priority = sectionDef.Priority ?? 0;
-            var links = new List<(string Title, string Url)>();
+            var links = new List<(string Title, string Url, string? LinkDescription)>();
 
             if (sectionDef.Path != null)
             {
@@ -746,9 +729,9 @@ public class StructuralLlmsGenerator
                 var sectionTitle = childCustomization?.Title ?? sectionDef.Name ?? ConvertToTitleCase(sectionDef.Path);
                 var sectionDesc = childCustomization?.Description;
 
-                // Get child's offers and parent's wants
+                // Get child's offers and parent's explicit includes
                 var childOffers = childCustomization?.Offers ?? new List<string>();
-                var wants = sectionDef.Wants ?? new List<string>();
+                var explicitIncludes = sectionDef.Include ?? new List<string>();
 
                 // Calculate how many offers to include based on priority (100 = 100%, 50 = 50%, etc.)
                 // Always round up so that 50% of 1 offer still shows 1 offer
@@ -757,11 +740,13 @@ public class StructuralLlmsGenerator
                     ? (int)Math.Ceiling(offerCount * priority / 100.0)
                     : 0;
 
-                // Resolve what files to include
+                // Resolve what files to include:
+                // - If parent specifies includes, use those (relative to child path)
+                // - Otherwise fall back to child's offers based on priority
                 var toInclude = new List<string>();
-                if (wants.Any())
+                if (explicitIncludes.Any())
                 {
-                    toInclude.AddRange(wants);
+                    toInclude.AddRange(explicitIncludes);
                     foreach (var offer in childOffers)
                     {
                         if (toInclude.Count >= offersToInclude) break;
@@ -793,7 +778,7 @@ public class StructuralLlmsGenerator
                             var subDirCustomization = _customizations?.GetCustomization(subDirPath);
                             var subDirTitle = subDirCustomization?.Title ?? ConvertToTitleCase(include);
                             var subDirLlmsUrl = GetGitHubUrl(Path.Combine(subDirFullPath, "llms.txt"), rootDir);
-                            links.Add((subDirTitle, subDirLlmsUrl));
+                            links.Add((subDirTitle, subDirLlmsUrl, null));
                         }
                         else
                         {
@@ -802,17 +787,18 @@ public class StructuralLlmsGenerator
                                 Path.GetFileNameWithoutExtension(f.RelativePath).Equals(include, StringComparison.OrdinalIgnoreCase));
                             if (match != null)
                             {
-                                links.Add((match.Title, GetGitHubUrl(match.FullPath, rootDir)));
+                                links.Add((match.Title, GetGitHubUrl(match.FullPath, rootDir), null));
                             }
                         }
                     }
                 }
 
-                // Always add link to the child's llms.txt as the index
+                // Always add link to the child's llms.txt as the index - FIRST in the list
                 var childLlmsFullPath = Path.Combine(rootDir, childDirPath, "llms.txt");
                 var llmsUrl = GetGitHubUrl(childLlmsFullPath, rootDir);
-                var indexTitle = $"{sectionTitle} Documentation Index";
-                links.Add((indexTitle, llmsUrl));
+                var indexTitle = $"{sectionTitle} Index";
+                var indexDescription = $"Complete index with {childFiles.Count} topics";
+                links.Insert(0, (indexTitle, llmsUrl, indexDescription));
 
                 var section = new Section
                 {
@@ -835,7 +821,7 @@ public class StructuralLlmsGenerator
 
                     if (matchingFile != null)
                     {
-                        links.Add((matchingFile.Title, GetGitHubUrl(matchingFile.FullPath, rootDir)));
+                        links.Add((matchingFile.Title, GetGitHubUrl(matchingFile.FullPath, rootDir), null));
                     }
                     else
                     {
@@ -843,7 +829,7 @@ public class StructuralLlmsGenerator
                         var dirFullPath = Path.Combine(rootDir, includePath, "llms.txt");
                         var dirCustomization = _customizations?.GetCustomization(includePath);
                         var dirTitle = dirCustomization?.Title ?? ConvertToTitleCase(Path.GetFileName(includePath));
-                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir)));
+                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir), null));
                     }
                 }
 
@@ -933,14 +919,14 @@ public class StructuralLlmsGenerator
                 lines.Add("");
             }
 
-            foreach (var (linkTitle, linkUrl) in section.Links)
+            foreach (var (linkTitle, linkUrl, linkDescription) in section.Links)
             {
-                // Try to find description from file index
-                var fileDesc = GetFileByUrl(linkUrl)?.Description;
+                // Use explicit link description if provided, otherwise fall back to file description
+                var desc = linkDescription ?? GetFileByUrl(linkUrl)?.Description;
 
-                if (!string.IsNullOrEmpty(fileDesc))
+                if (!string.IsNullOrEmpty(desc))
                 {
-                    lines.Add($"- [{linkTitle}]({linkUrl}): {fileDesc}");
+                    lines.Add($"- [{linkTitle}]({linkUrl}): {desc}");
                 }
                 else
                 {
@@ -997,9 +983,7 @@ public class StructuralLlmsGenerator
                 {
                     lines.Add("");
                 }
-                // Use "Other Topic Indices" if there are prioritized sections, otherwise just "Topic Indices"
-                var hasPrioritizedSections = sectionDefs?.Any() == true;
-                lines.Add(hasPrioritizedSections ? "## Other Topic Indices" : "## Topic Indices");
+                lines.Add("## Topic Indices");
                 lines.Add("");
 
                 // Extended file link first
@@ -1007,7 +991,7 @@ public class StructuralLlmsGenerator
                 {
                     var overflowUrl = GetGitHubUrl(overflowPath, rootDir);
                     var topicCount = files.Count;
-                    lines.Add($"- [{topicCount} more topics in {title}]({overflowUrl})");
+                    lines.Add($"- [{title} Extended Index]({overflowUrl}): Extended index with {topicCount} additional topics");
                 }
 
                 // Then all remaining children as index links (with shortDescription if available)

@@ -6,5 +6,5 @@ internal class Section
 {
     public string? Name { get; set; } // Null = no section header (ungrouped items)
     public string? Description { get; set; } // Optional description shown after section header
-    public List<(string Title, string Url)> Links { get; set; } = new();
+    public List<(string Title, string Url, string? LinkDescription)> Links { get; set; } = new();
 }
