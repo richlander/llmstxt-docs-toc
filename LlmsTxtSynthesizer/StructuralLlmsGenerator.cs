@@ -853,8 +853,13 @@ public class StructuralLlmsGenerator
                             var subDirCustomization = _customizations?.GetCustomization(subDirPath);
                             var subDirTitle = subDirCustomization?.Title ?? ConvertToTitleCase(include);
                             var subDirLlmsUrl = GetGitHubUrl(Path.Combine(subDirFullPath, "llms.txt"), rootDir);
+                            var (subFileTopics, subTreeTopics) = GetTopicCounts(subDirFullPath);
+                            var subMetrics = FormatTopicMetrics(subFileTopics, subTreeTopics);
                             var subDirShortDesc = subDirCustomization?.ShortDescription;
-                            links.Add((subDirTitle, subDirLlmsUrl, subDirShortDesc));
+                            var subDesc = !string.IsNullOrEmpty(subDirShortDesc) 
+                                ? $"{subMetrics}; {subDirShortDesc}" 
+                                : subMetrics;
+                            links.Add((subDirTitle, subDirLlmsUrl, subDesc));
                         }
                         else
                         {
@@ -907,11 +912,17 @@ public class StructuralLlmsGenerator
                     else
                     {
                         // Assume it's a directory - link to its llms.txt
-                        var dirFullPath = Path.Combine(rootDir, includePath, "llms.txt");
+                        var dirPath = Path.Combine(rootDir, includePath);
+                        var dirFullPath = Path.Combine(dirPath, "llms.txt");
                         var dirCustomization = _customizations?.GetCustomization(includePath);
                         var dirTitle = dirCustomization?.Title ?? ConvertToTitleCase(Path.GetFileName(includePath));
+                        var (dirFileTopics, dirTreeTopics) = GetTopicCounts(dirPath);
+                        var dirMetrics = FormatTopicMetrics(dirFileTopics, dirTreeTopics);
                         var dirShortDesc = dirCustomization?.ShortDescription;
-                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir), dirShortDesc));
+                        var dirDesc = !string.IsNullOrEmpty(dirShortDesc)
+                            ? $"{dirMetrics}; {dirShortDesc}"
+                            : dirMetrics;
+                        links.Add((dirTitle, GetGitHubUrl(dirFullPath, rootDir), dirDesc));
                     }
                 }
 
