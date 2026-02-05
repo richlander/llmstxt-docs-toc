@@ -275,7 +275,6 @@ LlmsTxtSynthesizer/
 ## Related
 
 - [llms.txt Specification](https://llmstxt.org)
-- [SINGLE_FILE_APPROACH.md](SINGLE_FILE_APPROACH.md) - Design decisions
 - [.NET Documentation](https://learn.microsoft.com/dotnet)
 
 ## License
