@@ -26,7 +26,7 @@ public class LlmsCustomization
     public string? Description { get; set; }
 
     /// <summary>
-    /// Short description for use in link text (e.g., in Topic Indices).
+    /// Short description for use in link text (e.g., in Subtopics).
     /// </summary>
     [JsonPropertyName("shortDescription")]
     public string? ShortDescription { get; set; }

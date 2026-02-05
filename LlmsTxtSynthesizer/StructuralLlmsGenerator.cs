@@ -161,7 +161,9 @@ public class StructuralLlmsGenerator
             if (relativePath.Contains("node_modules") ||
                 relativePath.Contains(".git") ||
                 relativePath.Contains("bin/") ||
-                relativePath.Contains("obj/"))
+                relativePath.Contains("obj/") ||
+                relativePath.Contains("/snippets/") ||
+                relativePath.StartsWith("snippets/"))
             {
                 continue;
             }
@@ -321,8 +323,8 @@ public class StructuralLlmsGenerator
             lines.Add("");
         }
 
-        // Add all child directories under a single Topic Indices section
-        lines.Add("## Topic Indices");
+        // Add all child directories under a single Subtopics section
+        lines.Add("## Subtopics");
         lines.Add("");
 
         foreach (var childDir in childDirs.OrderBy(d => d))
@@ -332,8 +334,8 @@ public class StructuralLlmsGenerator
             var childCustomization = _customizations?.GetCustomization(childCustomizationPath);
 
             var childTitle = childCustomization?.Title ?? ConvertToTitleCase(childName);
-            var (fileTopics, treeTopics) = GetTopicCounts(childDir);
-            var metrics = FormatTopicMetrics(fileTopics, treeTopics);
+            var (_, treeTopics) = GetTopicCounts(childDir);
+            var metrics = FormatTopicMetrics(treeTopics);
             var shortDesc = childCustomization?.ShortDescription;
             var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
 
@@ -440,13 +442,9 @@ public class StructuralLlmsGenerator
     /// Format topic metrics for display: "N topics[, M in tree]"
     /// Only shows tree count if significantly larger than file count.
     /// </summary>
-    private static string FormatTopicMetrics(int fileTopics, int treeTopics)
+    private static string FormatTopicMetrics(int treeTopics)
     {
-        if (treeTopics > fileTopics * 1.5 && treeTopics > fileTopics + 5)
-        {
-            return $"{fileTopics} topics, {treeTopics} in tree";
-        }
-        return $"{fileTopics} topics";
+        return $"Topics available: {treeTopics}";
     }
 
     private static bool IsInIncludesDirectory(string path)
@@ -702,6 +700,8 @@ public class StructuralLlmsGenerator
         if (!string.IsNullOrEmpty(description))
             lines += 2; // Description + blank
 
+        lines += 2; // Topic count summary + blank
+
         if (guidance?.Items?.Any() == true)
             lines += 3 + guidance.Items.Count; // Header + blank + intro? + items + blank
 
@@ -853,8 +853,8 @@ public class StructuralLlmsGenerator
                             var subDirCustomization = _customizations?.GetCustomization(subDirPath);
                             var subDirTitle = subDirCustomization?.Title ?? ConvertToTitleCase(include);
                             var subDirLlmsUrl = GetGitHubUrl(Path.Combine(subDirFullPath, "llms.txt"), rootDir);
-                            var (subFileTopics, subTreeTopics) = GetTopicCounts(subDirFullPath);
-                            var subMetrics = FormatTopicMetrics(subFileTopics, subTreeTopics);
+                            var (_, subTreeTopics) = GetTopicCounts(subDirFullPath);
+                            var subMetrics = FormatTopicMetrics(subTreeTopics);
                             var subDirShortDesc = subDirCustomization?.ShortDescription;
                             var subDesc = !string.IsNullOrEmpty(subDirShortDesc) 
                                 ? $"{subMetrics}; {subDirShortDesc}" 
@@ -882,8 +882,8 @@ public class StructuralLlmsGenerator
                 var childFullPath = Path.Combine(rootDir, childDirPath);
                 var llmsUrl = GetGitHubUrl(childLlmsFullPath, rootDir);
                 var indexTitle = $"{sectionTitle} Index";
-                var (fileTopics, treeTopics) = GetTopicCounts(childFullPath);
-                var indexDescription = FormatTopicMetrics(fileTopics, treeTopics);
+                var (_, treeTopics) = GetTopicCounts(childFullPath);
+                var indexDescription = FormatTopicMetrics(treeTopics);
                 links.Insert(0, (indexTitle, llmsUrl, indexDescription));
 
                 var section = new Section
@@ -916,8 +916,8 @@ public class StructuralLlmsGenerator
                         var dirFullPath = Path.Combine(dirPath, "llms.txt");
                         var dirCustomization = _customizations?.GetCustomization(includePath);
                         var dirTitle = dirCustomization?.Title ?? ConvertToTitleCase(Path.GetFileName(includePath));
-                        var (dirFileTopics, dirTreeTopics) = GetTopicCounts(dirPath);
-                        var dirMetrics = FormatTopicMetrics(dirFileTopics, dirTreeTopics);
+                        var (_, dirTreeTopics) = GetTopicCounts(dirPath);
+                        var dirMetrics = FormatTopicMetrics(dirTreeTopics);
                         var dirShortDesc = dirCustomization?.ShortDescription;
                         var dirDesc = !string.IsNullOrEmpty(dirShortDesc)
                             ? $"{dirMetrics}; {dirShortDesc}"
@@ -963,6 +963,23 @@ public class StructuralLlmsGenerator
         if (!string.IsNullOrEmpty(description))
         {
             lines.Add($"> {description}");
+            lines.Add("");
+        }
+
+        // Add metadata line (topic count + last updated for root)
+        var (_, dirTreeTopics) = GetTopicCounts(baseDir);
+        if (dirTreeTopics > 0)
+        {
+            var metadata = $"*Topics available: {dirTreeTopics}";
+            var baseDirNorm = Path.GetFullPath(baseDir).TrimEnd(Path.DirectorySeparatorChar);
+            var rootDirNorm = Path.GetFullPath(rootDir).TrimEnd(Path.DirectorySeparatorChar);
+            var isRoot = baseDirNorm == rootDirNorm;
+            if (isRoot)
+            {
+                metadata += $"; Last updated: {DateTime.UtcNow:yyyy-MM-dd}";
+            }
+            metadata += "*";
+            lines.Add(metadata);
             lines.Add("");
         }
 
@@ -1035,7 +1052,7 @@ public class StructuralLlmsGenerator
             }
         }
 
-        // Add child directories to Topic Indices
+        // Add child directories to Subtopics
         // (Custom sections from _llms.json already pulled in prioritized content via BuildCustomSections)
         // Offers alone don't trigger embedding - only explicit sections queries do
         if (childDirs.Any() || overflowPath != null)
@@ -1070,14 +1087,14 @@ public class StructuralLlmsGenerator
                 indexChildren.Add((childDir, childName, childCustomization));
             }
 
-            // Render "Topic Indices" section with extended file + all remaining children
+            // Render "Subtopics" section with extended file + all remaining children
             if (overflowPath != null || indexChildren.Any())
             {
                 if (lines.Count > 0 && !string.IsNullOrEmpty(lines[^1]))
                 {
                     lines.Add("");
                 }
-                lines.Add("## Topic Indices");
+                lines.Add("## Subtopics");
                 lines.Add("");
 
                 // Extended file link first
@@ -1093,8 +1110,8 @@ public class StructuralLlmsGenerator
                 {
                     var displayName = childCustomization?.Title ?? ConvertToTitleCase(childName);
                     var llmsTxtUrl = GetGitHubUrl(Path.Combine(childDir, "llms.txt"), rootDir);
-                    var (fileTopics, treeTopics) = GetTopicCounts(childDir);
-                    var metrics = FormatTopicMetrics(fileTopics, treeTopics);
+                    var (_, treeTopics) = GetTopicCounts(childDir);
+                    var metrics = FormatTopicMetrics(treeTopics);
                     var shortDesc = childCustomization?.ShortDescription;
                     
                     if (!string.IsNullOrEmpty(shortDesc))
